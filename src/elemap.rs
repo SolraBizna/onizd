@@ -1,0 +1,190 @@
+/*
+ *
+ * This file is part of onizd, copyright ©2020 Solra Bizna.
+ *
+ * onizd is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * onizd is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+ * details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * onizd. If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+
+lazy_static! {
+    static ref ELEMENTS: HashMap<i32, &'static str> = vec![
+        (-2123557039, "CrushedIce"),
+        (-2120504832, "SulfurGas"),
+        (-2079931820, "Diamond"),
+        (-2070223827, "Aerogel"),
+        (-2008682336, "Isoresin"),
+        (-1946026749, "SaltGas"),
+        (-1934139602, "LiquidHelium"),
+        (-1908044868, "LiquidOxygen"),
+        (-1901832310, "PhosphateNodules"),
+        (-1870043872, "Algae"),
+        (-1858722091, "Propane"),
+        (-1779895821, "Niobium"),
+        (-1736594426, "Cuprite"),
+        (-1725038055, "Copper"),
+        (-1714565729, "CrushedRock"),
+        (-1713958528, "SuperInsulator"),
+        (-1683093854, "ViscoGel"),
+        (-1637472877, "MoltenAluminum"),
+        (-1624413844, "Yellowcake"),
+        (-1616033402, "NiobiumGas"),
+        (-1561279013, "BrineIce"),
+        (-1558864561, "MoltenLead"),
+        (-1554872654, "Helium"),
+        (-1528777920, "Oxygen"),
+        (-1526513293, "LiquidCarbonDioxide"),
+        (-1495120499, "SolidViscoGel"),
+        (-1467370314, "Ceramic"),
+        (-1456075980, "Void"),
+        (-1412059381, "CrudeOil"),
+        (-1406916018, "SteelGas"),
+        (-1396791454, "Fertilizer"),
+        (-1324664829, "ChlorineGas"),
+        (-1312713527, "MoltenGlass"),
+        (-1224086026, "SolidCrudeOil"),
+        (-1208854194, "Wolframite"),
+        (-1153056158, "SlimeMold"),
+        (-1142341158, "Polypropylene"),
+        (-1112594153, "SolidNaphtha"),
+        (-1108652427, "LiquidSulfur"),
+        (-1083496621, "MoltenGold"),
+        (-1075911705, "Magma"),
+        (-1058835580, "Tungsten"),
+        (-1046145888, "Hydrogen"),
+        (-1038746460, "SandCement"),
+        (-927923200, "SourGas"),
+        (-902240476, "RefinedCarbon"),
+        (-899515856, "Steam"),
+        (-899253461, "Steel"),
+        (-878033482, "Chlorine"),
+        (-877427037, "Phosphorite"),
+        (-858172533, "SolidHydrogen"),
+        (-841236436, "Methane"),
+        (-839856666, "MercuryGas"),
+        (-839728230, "BleachStone"),
+        (-805366663, "GoldGas"),
+        (-756961258, "EthanolGas"),
+        (-755153220, "Lead"),
+        (-751997156, "LiquidHydrogen"),
+        (-729385479, "Sulfur"),
+        (-721320011, "Lime"),
+        (-690658692, "SolidSyngas"),
+        (-690060127, "SolidChlorine"),
+        (-645698215, "LiquidPropane"),
+        (-537625624, "SolidMercury"),
+        (-509585641, "MoltenTungsten"),
+        (-486269331, "Petroleum"),
+        (-474151749, "Obsidian"),
+        (-473261502, "SolidPetroleum"),
+        (-432557516, "RockGas"),
+        (-422045879, "MoltenSalt"),
+        (-389019570, "SolidSuperCoolant"),
+        (-355957251, "IgneousRock"),
+        (-348942381, "EnrichedUranium"),
+        (-325269471, "Brick"),
+        (-324547888, "Brine"),
+        (-314016756, "CarbonGas"),
+        (-279785280, "Gold"),
+        (-233232444, "Rust"),
+        (-232430636, "NuclearWaste"),
+        (-220394187, "Phosphorus"),
+        (-123825053, "SuperCoolant"),
+        (-105943486, "Granite"),
+        (-87974045, "Ethanol"),
+        (-47820500, "Radium"),
+        (-3376362, "SuperCoolantGas"),
+        (28407099, "Electrum"),
+        (83003332, "SolidCarbonDioxide"),
+        (100766521, "AluminumGas"),
+        (118518245, "CarbonFibre"),
+        (134298891, "UraniumOre"),
+        (166493482, "SolidPropane"),
+        (167973730, "AluminumOre"),
+        (183408504, "SedimentaryRock"),
+        (245514112, "Fullerene"),
+        (361868060, "GoldAmalgam"),
+        (371787440, "LiquidMethane"),
+        (381665462, "Salt"),
+        (381796644, "Sand"),
+        (431998133, "TungstenGas"),
+        (489261827, "Snow"),
+        (493438017, "SandStone"),
+        (502659099, "MoltenIron"),
+        (505665536, "MoltenCarbon"),
+        (623986332, "Glass"),
+        (660593444, "MoltenSyngas"),
+        (721531317, "ContaminatedOxygen"),
+        (758759285, "Vacuum"),
+        (867327137, "Clay"),
+        (869554203, "ToxicSand"),
+        (873952427, "Ice"),
+        (905042813, "LeadGas"),
+        (947100397, "Carbon"),
+        (973502379, "SolidOxygen"),
+        (976099455, "Creature"),
+        (1064294988, "DepletedUranium"),
+        (1071649902, "Katairite"),
+        (1102028305, "Syngas"),
+        (1157157570, "Naphtha"),
+        (1183979137, "SolidMethane"),
+        (1262005685, "OxyRock"),
+        (1282846257, "MaficRock"),
+        (1306370440, "Iron"),
+        (1323821489, "LiquidPhosphorus"),
+        (1362238252, "Regolith"),
+        (1412740729, "Slabs"),
+        (1433229102, "Bitumen"),
+        (1459013976, "MoltenSteel"),
+        (1499134368, "MoltenNiobium"),
+        (1541626289, "IronGas"),
+        (1559722904, "TempConductorSolid"),
+        (1608833498, "IronOre"),
+        (1624244999, "Dirt"),
+        (1627140480, "Cement"),
+        (1664334585, "DirtyIce"),
+        (1668719292, "CementMix"),
+        (1732126099, "Mercury"),
+        (1757792140, "Fossil"),
+        (1832607973, "DirtyWater"),
+        (1836671383, "Water"),
+        (1838482828, "Unobtanium"),
+        (1887387588, "PhosphorusGas"),
+        (1911997537, "SaltWater"),
+        (1937241528, "SolidEthanol"),
+        (1937473860, "MoltenUranium"),
+        (1960575215, "CarbonDioxide"),
+        (1966552544, "CopperGas"),
+        (2059777261, "FoolsGold"),
+        (2108244480, "Aluminum"),
+        (2128494380, "MoltenCopper"),
+    ].into_iter().collect();
+    static ref GERMS: HashMap<i32, &'static str> = vec![
+        (0, "FoodPois"),
+        (1, "Slimelung"),
+        (2, "Pollen"),
+        (3, "ZombieSpores"),
+    ].into_iter().collect();
+}
+
+pub fn get_element_name(id: i32) -> Option<&'static str> {
+    ELEMENTS.get(&id).map(|x| *x)
+}
+
+pub fn get_germ_name(id: i32) -> Option<&'static str> {
+    GERMS.get(&id).map(|x| *x)
+}
+
