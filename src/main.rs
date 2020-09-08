@@ -311,6 +311,12 @@ async fn inner_client(verbosity: usize,
                 };
                 if let Value::String(typ) = &message["type"] {
                     match typ.as_str() {
+                        "ping" => {
+                            send_response(verbosity, &mut writesock,
+                                          json!({
+                                              "type": "pong",
+                                          }), &message["cookie"]).await?;
+                        },
                         "send_joules" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
