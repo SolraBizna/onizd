@@ -58,8 +58,7 @@ impl RegSender {
 }
 
 /// Contains all the state for the "interlayer" map. Incorporates temporary
-/// storage for energy, <del>solids</del>, <del>liquids</del>, <del>and
-/// gases</del>.
+/// storage for energy, <del>solids</del>, liquids, and gases.
 pub struct Map {
     energy: HashMap<Point, u32>,
     gas_packets: HashMap<Point, Vec<MatPacket>>,
