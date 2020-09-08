@@ -25,12 +25,15 @@ use std::{
 };
 use std::net::SocketAddr;
 use tokio::{
-    net::{TcpListener, TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}},
-    io::{BufReader, AsyncReadExt, AsyncBufReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    io::AsyncReadExt,
+    stream::StreamExt,
     time::timeout,
     fs::File,
-    sync::mpsc,
 };
+use futures::sink::SinkExt;
+use tokio_util::codec;
+use bytes::{BytesMut, buf::{Buf, BufMut}};
 use serde_json::{Value,json};
 #[cfg(feature = "auth")]
 use rand::{prelude::*, rngs::OsRng};
@@ -79,7 +82,7 @@ fn expect_string(val: &Value) -> std::io::Result<&str> {
 }
 
 
-async fn send_response(verbosity: usize, socket: &mut OwnedWriteHalf,
+async fn send_response(verbosity: usize, socket: &mut Client,
                        mut json: Value, cookie: &Value) -> std::io::Result<()>
 {
     // TODO: debug_assert that there's a "type" key
@@ -90,41 +93,62 @@ async fn send_response(verbosity: usize, socket: &mut OwnedWriteHalf,
     if verbosity >= 2 {
         eprintln!("    ← {}", json);
     }
-    socket.write_all(json.to_string().as_bytes()).await?;
-    socket.write_all(b"\n").await                   
+    socket.send(json).await
 }
 
-async fn get_message(verbosity: usize, socket: &mut BufReader<OwnedReadHalf>,
-                     buf: &mut Vec<u8>) -> std::io::Result<Option<Value>> {
-    loop {
-        buf.clear();
-        socket.read_until(b'\n', buf).await?;
-        if buf == b"\n" { continue }
-        let buf = match std::str::from_utf8(&buf[..]) {
-            Ok(x) => x,
-            Err(_) => return Err(errorize("Received invalid UTF-8")),
-        };
-        if buf.is_empty() { return Ok(None) }
-        match serde_json::from_str(buf) {
-            Err(_) => return Err(errorize("Received invalid JSON")),
-            Ok(x) => match x {
-                Value::Object(_) => {
-                    if verbosity >= 2 {
-                        eprintln!("    → {}", x);
+struct MessageCoder {
+    verbosity: usize,
+}
+impl codec::Decoder for MessageCoder {
+    type Item = Value;
+    type Error = std::io::Error;
+    fn decode(&mut self, src: &mut BytesMut) -> std::io::Result<Option<Value>>{
+        while !src.is_empty() && src[0] == b'\n' {
+            let _ = src.get_u8();
+        }
+        for n in 0 .. src.len() {
+            if src[n] == b'\n' {
+                let splat = src.split_to(n);
+                let as_utf8 = match std::str::from_utf8(&splat[..]) {
+                    Ok(x) => x,
+                    Err(_) => return Err(errorize("Received invalid UTF-8")),
+                };
+                match serde_json::from_str(as_utf8) {
+                    Err(_) => return Err(errorize("Received invalid JSON")),
+                    Ok(x) => match x {
+                        Value::Object(_) => {
+                            if self.verbosity >= 2 {
+                                eprintln!("    → {}", x);
+                            }
+                            return Ok(Some(x))
+                        },
+                        _ => return Err(errorize("Received non-object JSON")),
                     }
-                    return Ok(Some(x));
                 }
-                _ => return Err(errorize("Received non-object JSON")),
             }
         }
+        if src.len() > 10000 {
+            return Err(errorize("Improbably long message"));
+        }
+        Ok(None)
     }
 }
-
-/// Either a message from the client, or an (un)registration notification.
-enum ClientRelevantMessage {
-    ClientMessage(std::io::Result<Option<Value>>),
-    Registration((bool, Point, String)),
+impl codec::Encoder<Value> for MessageCoder {
+    type Error = std::io::Error;
+    fn encode(&mut self, json: Value, dst: &mut BytesMut)
+              -> std::io::Result<()> {
+        let s = json.to_string();
+        if self.verbosity >= 2 {
+            eprintln!("    ← {}", s);
+        }
+        let b = s.as_bytes();
+        dst.reserve(b.len() + 1);
+        dst.put(b);
+        dst.put_u8(b'\n');
+        Ok(())
+    }
 }
+type Client = codec::Framed<TcpStream, MessageCoder>;
 
 async fn inner_client(verbosity: usize,
                       offset_mode: bool,
@@ -135,18 +159,16 @@ async fn inner_client(verbosity: usize,
                       client_id: ClientID)
                       -> std::io::Result<()> {
     socket.set_nodelay(true)?;
-    let (readsock, mut writesock) = socket.into_split();
+    let mut client = codec::Framed::new(socket, MessageCoder { verbosity });
     let recv_offset_y = if offset_mode { 1 } else { 0 };
-    let mut readsock = BufReader::new(readsock);
-    let mut msgbuf = Vec::new();
     // make sure our client talks the right protocol at us
     // TODO: make the timeout duration configurable
-    let message = match timeout(Duration::from_secs(10),
-                                get_message(verbosity, &mut readsock,
-                                            &mut msgbuf)).await {
+    let message = match timeout(Duration::from_secs(10), client.next()).await {
         Err(_) => return Err(errorize("timed out")),
-        Ok(Err(_)) | Ok(Ok(None)) => return Err(errorize("invalid handshake")),
-        Ok(Ok(Some(x))) => x,
+        // o_O
+        Ok(None) | Ok(Some(Err(_))) =>
+            return Err(errorize("invalid handshake")),
+        Ok(Some(Ok(x))) => x,
     };
     match message["type"] {
         // ick...
@@ -168,7 +190,7 @@ async fn inner_client(verbosity: usize,
         0 => (), // OK
         x => {
             // (ignore an error sending this response)
-            let _ = send_response(verbosity, &mut writesock,
+            let _ = send_response(verbosity, &mut client,
                                   json!({
                                       "type": "bad_version",
                                       "supported_versions": [0],
@@ -194,7 +216,7 @@ async fn inner_client(verbosity: usize,
         let mut buf = [0; AUTH_BYTE_SIZE];
         for n in 0 .. NUM_CHALLENGES {
             let offset = offsets[n];
-            send_response(verbosity, &mut writesock,
+            send_response(verbosity, &mut client,
                           json!({
                               "type": "need_auth",
                               "offset": offset,
@@ -211,9 +233,8 @@ async fn inner_client(verbosity: usize,
             }
             let calculated_hash = lsx::sha256::hash(&buf[..]);
             let calculated_hash = base64::encode(&calculated_hash[..]);
-            let message = match get_message(verbosity, &mut readsock,
-                                            &mut msgbuf).await? {
-                Some(x) => x,
+            let message = match client.next().await {
+                Some(x) => x?,
                 None => return Ok(()),
             };
             if let Value::String(typ) = &message["type"] {
@@ -243,7 +264,7 @@ async fn inner_client(verbosity: usize,
                 eprintln!("    WARNING!!! Passed {}/{} auths!", ok_auths,
                           NUM_CHALLENGES);
             }
-            send_response(verbosity, &mut writesock,
+            send_response(verbosity, &mut client,
                           json!({
                               "type": "auth_bad"
                           }), &Value::Null).await?;
@@ -258,45 +279,16 @@ async fn inner_client(verbosity: usize,
     }
     #[cfg(not(feature = "auth"))]
     std::mem::drop(auth_file); // normally dropped by the above
-    send_response(verbosity, &mut writesock,
+    send_response(verbosity, &mut client,
                   json!({
                       "type": "auth_ok"
                   }), &Value::Null).await?;
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    {
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            loop {
-                let res = get_message(verbosity, &mut readsock, &mut msgbuf).await;
-                let owari = match res {
-                    Err(_) | Ok(None) => true,
-                    _ => false,
-                };
-                match tx.send(ClientRelevantMessage::ClientMessage(res)) {
-                    Err(_) => break,
-                    Ok(_) => (),
-                }
-                if owari { break }
-            }
-        });
-    }
-    {
-        let mut registrations = map.lock().unwrap().get_registrations();
-        tokio::spawn(async move {
-            while let Some(x) = registrations.recv().await {
-                match tx.send(ClientRelevantMessage::Registration(x)) {
-                    Err(_) => break,
-                    Ok(_) => (),
-                }
-            }
-        });
-    }
+    let mut registrations = map.lock().unwrap().get_registrations();
     loop {
-        match rx.recv().await {
-            None => return Err(errorize("Receivers unexpectedly dropped")),
-            Some(ClientRelevantMessage::Registration((polarity, loc, what)))=>{
+        tokio::select! {
+            Some((polarity, loc, what)) = registrations.next() => {
                 let typ = if polarity { "registered" } else { "unregistered "};
-                send_response(verbosity, &mut writesock,
+                send_response(verbosity, &mut client,
                               json!({
                                   "type": typ,
                                   "x": loc.get_x(),
@@ -304,15 +296,15 @@ async fn inner_client(verbosity: usize,
                                   "what": what,
                               }), &Value::Null).await?;
             },
-            Some(ClientRelevantMessage::ClientMessage(message)) => {
-                let message = match message? {
-                    Some(x) => x,
+            message = client.next() => {
+                let message = match message {
+                    Some(x) => x?,
                     None => return Ok(()),
                 };
                 if let Value::String(typ) = &message["type"] {
                     match typ.as_str() {
                         "ping" => {
-                            send_response(verbosity, &mut writesock,
+                            send_response(verbosity, &mut client,
                                           json!({
                                               "type": "pong",
                                           }), &message["cookie"]).await?;
@@ -323,7 +315,7 @@ async fn inner_client(verbosity: usize,
                             let joules = expect_int(&message["joules"])?;
                             let point = Point::new(x, y);
                             let spare = map.lock().unwrap().add_joules(point, joules);
-                            send_response(verbosity, &mut writesock,
+                            send_response(verbosity, &mut client,
                                           json!({
                                               "type": "sent_joules",
                                               "x": x,
@@ -348,7 +340,7 @@ async fn inner_client(verbosity: usize,
                             let point = Point::new(x, y + recv_offset_y);
                             let joules = map.lock().unwrap().sub_joules(point,
                                                                         max_joules);
-                            send_response(verbosity, &mut writesock,
+                            send_response(verbosity, &mut client,
                                           json!({
                                               "type": "got_joules",
                                               "x": x,
@@ -372,7 +364,7 @@ async fn inner_client(verbosity: usize,
                             let point = Point::new(x, y);
                             let accepted = map.lock().unwrap()
                                 .add_packet(point, &packet, phase);
-                            send_response(verbosity, &mut writesock,
+                            send_response(verbosity, &mut client,
                                           json!({
                                               "type": "sent_packet",
                                               "x": x,
@@ -396,7 +388,7 @@ async fn inner_client(verbosity: usize,
                             let phase = serde_json::from_value(message["phase"].clone())?;
                             let point = Point::new(x, y + recv_offset_y);
                             let packet = map.lock().unwrap().pop_packet(point, phase);
-                            send_response(verbosity, &mut writesock,
+                            send_response(verbosity, &mut client,
                                           json!({
                                               "type": "got_packet",
                                               "x": x,
