@@ -82,16 +82,13 @@ fn expect_string(val: &Value) -> std::io::Result<&str> {
 }
 
 
-async fn send_response(verbosity: usize, socket: &mut Client,
-                       mut json: Value, cookie: &Value) -> std::io::Result<()>
+async fn send_response(socket: &mut Client, mut json: Value,
+                       cookie: &Value) -> std::io::Result<()>
 {
     // TODO: debug_assert that there's a "type" key
     match cookie {
         Value::Null | Value::Object(_) | Value::Array(_) => (),
         x => json["cookie"] = x.clone(),
-    }
-    if verbosity >= 2 {
-        eprintln!("    ← {}", json);
     }
     socket.send(json).await
 }
@@ -190,7 +187,7 @@ async fn inner_client(verbosity: usize,
         0 => (), // OK
         x => {
             // (ignore an error sending this response)
-            let _ = send_response(verbosity, &mut client,
+            let _ = send_response(&mut client,
                                   json!({
                                       "type": "bad_version",
                                       "supported_versions": [0],
@@ -216,7 +213,7 @@ async fn inner_client(verbosity: usize,
         let mut buf = [0; AUTH_BYTE_SIZE];
         for n in 0 .. NUM_CHALLENGES {
             let offset = offsets[n];
-            send_response(verbosity, &mut client,
+            send_response(&mut client,
                           json!({
                               "type": "need_auth",
                               "offset": offset,
@@ -264,7 +261,7 @@ async fn inner_client(verbosity: usize,
                 eprintln!("    WARNING!!! Passed {}/{} auths!", ok_auths,
                           NUM_CHALLENGES);
             }
-            send_response(verbosity, &mut client,
+            send_response(&mut client,
                           json!({
                               "type": "auth_bad"
                           }), &Value::Null).await?;
@@ -279,7 +276,7 @@ async fn inner_client(verbosity: usize,
     }
     #[cfg(not(feature = "auth"))]
     std::mem::drop(auth_file); // normally dropped by the above
-    send_response(verbosity, &mut client,
+    send_response(&mut client,
                   json!({
                       "type": "auth_ok"
                   }), &Value::Null).await?;
@@ -288,7 +285,7 @@ async fn inner_client(verbosity: usize,
         tokio::select! {
             Some((polarity, loc, what)) = registrations.next() => {
                 let typ = if polarity { "registered" } else { "unregistered "};
-                send_response(verbosity, &mut client,
+                send_response(&mut client,
                               json!({
                                   "type": typ,
                                   "x": loc.get_x(),
@@ -304,7 +301,7 @@ async fn inner_client(verbosity: usize,
                 if let Value::String(typ) = &message["type"] {
                     match typ.as_str() {
                         "ping" => {
-                            send_response(verbosity, &mut client,
+                            send_response(&mut client,
                                           json!({
                                               "type": "pong",
                                           }), &message["cookie"]).await?;
@@ -316,7 +313,7 @@ async fn inner_client(verbosity: usize,
                             let joules = expect_int(&message["joules"])?;
                             let point = Point::new(x, y);
                             let spare = map.lock().unwrap().add_joules(point, joules);
-                            send_response(verbosity, &mut client,
+                            send_response(&mut client,
                                           json!({
                                               "type": "sent_joules",
                                               "x": x,
@@ -341,7 +338,7 @@ async fn inner_client(verbosity: usize,
                             let point = Point::new(x, y + recv_offset_y);
                             let joules = map.lock().unwrap().sub_joules(point,
                                                                         max_joules);
-                            send_response(verbosity, &mut client,
+                            send_response(&mut client,
                                           json!({
                                               "type": "got_joules",
                                               "x": x,
@@ -365,7 +362,7 @@ async fn inner_client(verbosity: usize,
                             let point = Point::new(x, y);
                             let accepted = map.lock().unwrap()
                                 .add_packet(point, &packet, phase);
-                            send_response(verbosity, &mut client,
+                            send_response(&mut client,
                                           json!({
                                               "type": "sent_packet",
                                               "x": x,
@@ -389,7 +386,7 @@ async fn inner_client(verbosity: usize,
                             let phase = serde_json::from_value(message["phase"].clone())?;
                             let point = Point::new(x, y + recv_offset_y);
                             let packet = map.lock().unwrap().pop_packet(point, phase);
-                            send_response(verbosity, &mut client,
+                            send_response(&mut client,
                                           json!({
                                               "type": "got_packet",
                                               "x": x,
