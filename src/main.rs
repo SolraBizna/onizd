@@ -28,7 +28,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     io::AsyncReadExt,
     stream::StreamExt,
-    time::timeout,
+    time::{timeout,interval},
     fs::File,
 };
 use futures::sink::SinkExt;
@@ -148,6 +148,7 @@ impl codec::Encoder<Value> for MessageCoder {
 type Client = codec::Framed<TcpStream, MessageCoder>;
 
 async fn inner_client(verbosity: usize,
+                      ping_interval: Option<Duration>,
                       offset_mode: bool,
                       auth_file: Option<String>,
                       map: &Arc<Mutex<Map>>,
@@ -281,8 +282,17 @@ async fn inner_client(verbosity: usize,
                       "type": "auth_ok"
                   }), &Value::Null).await?;
     let mut registrations = map.lock().unwrap().get_registrations();
+    // if there's no ping interval specified, ping once per day... since I
+    // can't figure out how to make an optional future while using `select!`...
+    let mut ping = interval(ping_interval.unwrap_or_else(|| Duration::new(86400,0)));
     loop {
         tokio::select! {
+            _ = ping.tick() => {
+                send_response(&mut client,
+                              json!({
+                                  "type": "ping",
+                              }), &Value::Null).await?;
+            },
             Some((polarity, loc, what)) = registrations.next() => {
                 let typ = if polarity { "registered" } else { "unregistered "};
                 send_response(&mut client,
@@ -437,11 +447,12 @@ async fn inner_client(verbosity: usize,
     }
 }
 
-async fn client(verbosity: usize, offset_mode: bool, auth_file: Option<String>,
+async fn client(verbosity: usize, ping_interval: Option<Duration>,
+                offset_mode: bool, auth_file: Option<String>,
                 map: Arc<Mutex<Map>>, socket: TcpStream, peer: SocketAddr,
                 client_id: ClientID) {
-    match inner_client(verbosity, offset_mode, auth_file, &map, socket, &peer,
-                       client_id)
+    match inner_client(verbosity, ping_interval, offset_mode, auth_file, &map,
+                       socket, &peer, client_id)
     .await {
         Ok(()) =>
             eprintln!("  {} DISCONNECTED", peer),
@@ -469,8 +480,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let offset_mode = invocation.offset_mode;
         let auth_file = invocation.auth_file.clone();
         let client_id = next_client_id;
+        let ping_interval = invocation.ping_interval;
         next_client_id = next_client_id.checked_add(1)
             .expect("Can't have more than 2^64 clients in one session!"); // :)
-        tokio::spawn(client(verbosity, offset_mode, auth_file, map_clone, socket, peer, client_id));
+        tokio::spawn(client(verbosity, ping_interval, offset_mode, auth_file, map_clone, socket, peer, client_id));
     }
 }

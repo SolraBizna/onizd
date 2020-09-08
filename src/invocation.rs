@@ -17,12 +17,15 @@
  *
  */
 
+use std::time::Duration;
+
 #[derive(Debug)]
 pub struct Invocation {
     pub listen_addr: Option<String>,
     pub auth_file: Option<String>,
     pub offset_mode: bool,
     pub verbosity: usize,
+    pub ping_interval: Option<Duration>,
 }
 
 fn print_usage(program: &str, opts: getopts::Options) {
@@ -42,6 +45,7 @@ pub fn get_invocation() -> Option<Invocation> {
     opts.optflagmulti("v", "verbose", "Print information every time something happens (lots!). Specify twice to print every received packet.");
     #[cfg(feature = "auth")]
     opts.optopt("a", "auth-file", "Specify the shared secret file to use for authentication. If absent, authentication will not be used.", "FILE");
+    opts.optopt("p", "ping-interval", "Send a \"ping\" message to each client roughly this often. This can help deal with broken NAT routers that aggressively drop idle connections.", "SECONDS");
     opts.optflag("?", "help", "Print this help string.");
     let matches = match opts.parse(&args[1..]) {
         Ok(x) => x,
@@ -62,6 +66,17 @@ pub fn get_invocation() -> Option<Invocation> {
             verbosity: matches.opt_count("v"),
             auth_file: if cfg!(feature = "auth") { matches.opt_str("a") }
             else { None },
+            ping_interval: match matches.opt_str("p") {
+                None => None,
+                Some(x) => match x.parse() {
+                    Ok(x) if x > 0 && x < 999 => Some(Duration::new(x, 0)),
+                    _ => {
+                        eprintln!("Invalid ping interval, should be between 1 and 999");
+                        print_usage(&args[0], opts);
+                        return None
+                    }
+                }
+            },
         })
     }
 }
