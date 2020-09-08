@@ -309,6 +309,7 @@ async fn inner_client(verbosity: usize,
                                               "type": "pong",
                                           }), &message["cookie"]).await?;
                         },
+                        "pong" => {},
                         "send_joules" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
