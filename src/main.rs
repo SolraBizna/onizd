@@ -81,6 +81,11 @@ fn expect_string(val: &Value) -> std::io::Result<&str> {
     }
 }
 
+fn register_maybe_offset(what: &str, recv_offset: i32) -> i32 {
+    if what.ends_with("Recver") { recv_offset }
+    else if what.ends_with("Sender") { -recv_offset }
+    else { 0 }
+}
 
 async fn send_response(socket: &mut Client, mut json: Value,
                        cookie: &Value) -> std::io::Result<()>
@@ -421,7 +426,7 @@ async fn inner_client(verbosity: usize,
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
                             let what = expect_string(&message["what"])?;
-                            let point = Point::new(x, y);
+                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             if !map.lock().unwrap().register(point, client_id,
                                                              what.to_owned()) {
                                 return Err(errorize("Registered too many buildings at \
@@ -432,7 +437,7 @@ async fn inner_client(verbosity: usize,
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
                             let what = expect_string(&message["what"])?;
-                            let point = Point::new(x, y);
+                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             map.lock().unwrap().unregister(point, client_id, what);
                         },
                         x => return Err(errorize(&format!("Received a message with \
