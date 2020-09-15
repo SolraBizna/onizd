@@ -20,10 +20,10 @@
 use std::{
     convert::{TryFrom,TryInto},
     io::SeekFrom,
+    net::SocketAddr,
     sync::{Arc,Mutex},
     time::Duration,
 };
-use std::net::SocketAddr;
 use tokio::{
     net::{TcpListener, TcpStream},
     io::AsyncReadExt,
@@ -34,6 +34,7 @@ use tokio::{
 use futures::sink::SinkExt;
 use tokio_util::codec;
 use bytes::{BytesMut, buf::{Buf, BufMut}};
+use serde::{Serialize,Deserialize};
 use serde_json::{Value,json};
 #[cfg(feature = "auth")]
 use rand::{prelude::*, rngs::OsRng};
@@ -48,6 +49,10 @@ mod mat;
 pub use mat::*;
 mod elemap;
 pub use elemap::*;
+mod wrapped;
+pub use wrapped::*;
+mod mit_zlib;
+pub use mit_zlib::{MitZlibReader, MitZlibWriter};
 
 pub const DEFAULT_ADDR_AND_PORT: &str = "0.0.0.0:5496";
 #[cfg(feature = "auth")]
@@ -56,6 +61,9 @@ pub const AUTH_BYTE_SIZE: usize = 5496;
 pub const NUM_CHALLENGES: usize = 3;
 
 pub type ClientID = u64;
+
+#[derive(Debug,PartialEq,Eq,Serialize,Deserialize)]
+pub enum CompressionType { Zlib }
 
 fn errorize(err: &str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, err)
@@ -98,8 +106,8 @@ async fn send_response(socket: &mut Client, mut json: Value,
     socket.send(json).await
 }
 
-struct MessageCoder {
-    verbosity: usize,
+pub struct MessageCoder {
+    verbosity: u32,
 }
 impl codec::Decoder for MessageCoder {
     type Item = Value;
@@ -110,7 +118,7 @@ impl codec::Decoder for MessageCoder {
         }
         for n in 0 .. src.len() {
             if src[n] == b'\n' {
-                let splat = src.split_to(n);
+                let splat = src.split_to(n+1);
                 let as_utf8 = match std::str::from_utf8(&splat[..]) {
                     Ok(x) => x,
                     Err(_) => return Err(errorize("Received invalid UTF-8")),
@@ -150,9 +158,9 @@ impl codec::Encoder<Value> for MessageCoder {
         Ok(())
     }
 }
-type Client = codec::Framed<TcpStream, MessageCoder>;
+type Client = codec::Framed<WrappedSocket, MessageCoder>;
 
-async fn inner_client(verbosity: usize,
+async fn inner_client(verbosity: u32,
                       ping_interval: Option<Duration>,
                       offset_mode: bool,
                       auth_file: Option<String>,
@@ -178,6 +186,10 @@ async fn inner_client(verbosity: usize,
         Value::String(ref x) if x == "hello" => (),
         _ => return Err(errorize("no \"hello\" in handshake")),
     }
+    let mut client = wrap_client(client,
+                                 serde_json::from_value
+                                 ::<Option<CompressionType>>
+                                 (message["compression"].clone())?).await?;
     match message["proto"] {
         Value::String(ref x) if x == "oniz" => (),
         _ => return Err(errorize("handshake is for wrong protocol")),
@@ -198,6 +210,7 @@ async fn inner_client(verbosity: usize,
                                       "type": "bad_version",
                                       "supported_versions": [0],
                                   }), &Value::Null).await;
+            let _ = client.flush().await;
             return Err(errorize(&format!("wanted unknown protocol version {}",
                                          x)))
         },
@@ -224,6 +237,7 @@ async fn inner_client(verbosity: usize,
                               "type": "need_auth",
                               "offset": offset,
                           }), &Value::Null).await?;
+            client.flush().await?;
             let start_pos = offset % len;
             file.seek(SeekFrom::Start(start_pos)).await?;
             let mut rem = &mut buf[..];
@@ -271,6 +285,7 @@ async fn inner_client(verbosity: usize,
                           json!({
                               "type": "auth_bad"
                           }), &Value::Null).await?;
+            client.flush().await?;
             return Ok(())
         }
         else {
@@ -287,6 +302,18 @@ async fn inner_client(verbosity: usize,
                       "type": "auth_ok"
                   }), &Value::Null).await?;
     let mut registrations = map.lock().unwrap().get_registrations();
+    // send all registrations before our first flush
+    while let Ok((polarity, loc, what)) = registrations.try_recv() {
+        let typ = if polarity { "registered" } else { "unregistered "};
+        send_response(&mut client,
+                      json!({
+                          "type": typ,
+                          "x": loc.get_x(),
+                          "y": loc.get_y(),
+                          "what": what,
+                      }), &Value::Null).await?;
+    }
+    client.flush().await?;
     // if there's no ping interval specified, ping once per day... since I
     // can't figure out how to make an optional future while using `select!`...
     let mut ping = interval(ping_interval.unwrap_or_else(|| Duration::new(86400,0)));
@@ -297,6 +324,7 @@ async fn inner_client(verbosity: usize,
                               json!({
                                   "type": "ping",
                               }), &Value::Null).await?;
+                client.flush().await?;
             },
             Some((polarity, loc, what)) = registrations.next() => {
                 let typ = if polarity { "registered" } else { "unregistered "};
@@ -307,6 +335,7 @@ async fn inner_client(verbosity: usize,
                                   "y": loc.get_y(),
                                   "what": what,
                               }), &Value::Null).await?;
+                client.flush().await?;
             },
             message = client.next() => {
                 let message = match message {
@@ -443,6 +472,7 @@ async fn inner_client(verbosity: usize,
                         x => return Err(errorize(&format!("Received a message with \
                                                            unknown type: {:?}", x)))
                     }
+                    client.flush().await?;
                 }
                 else {
                     return Err(errorize("Received a message with invalid type"))
@@ -452,7 +482,7 @@ async fn inner_client(verbosity: usize,
     }
 }
 
-async fn client(verbosity: usize, ping_interval: Option<Duration>,
+async fn client(verbosity: u32, ping_interval: Option<Duration>,
                 offset_mode: bool, auth_file: Option<String>,
                 map: Arc<Mutex<Map>>, socket: TcpStream, peer: SocketAddr,
                 client_id: ClientID) {

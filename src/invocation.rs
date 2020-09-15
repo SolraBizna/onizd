@@ -18,13 +18,14 @@
  */
 
 use std::time::Duration;
+use std::convert::TryInto;
 
 #[derive(Debug)]
 pub struct Invocation {
     pub listen_addr: Option<String>,
     pub auth_file: Option<String>,
     pub offset_mode: bool,
-    pub verbosity: usize,
+    pub verbosity: u32,
     pub ping_interval: Option<Duration>,
 }
 
@@ -63,7 +64,8 @@ pub fn get_invocation() -> Option<Invocation> {
         Some(Invocation {
             listen_addr: matches.opt_str("l"),
             offset_mode: matches.opt_present("o"),
-            verbosity: matches.opt_count("v"),
+            verbosity: matches.opt_count("v").try_into().expect("ridiculous \
+                                                                 -v count"),
             auth_file: if cfg!(feature = "auth") { matches.opt_str("a") }
             else { None },
             ping_interval: match matches.opt_str("p") {
