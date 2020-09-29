@@ -304,7 +304,7 @@ async fn inner_client(verbosity: u32,
     let mut registrations = map.lock().unwrap().get_registrations();
     // send all registrations before our first flush
     while let Ok((polarity, loc, what)) = registrations.try_recv() {
-        let typ = if polarity { "registered" } else { "unregistered "};
+        let typ = if polarity { "registered" } else { "unregistered"};
         send_response(&mut client,
                       json!({
                           "type": typ,
@@ -327,7 +327,7 @@ async fn inner_client(verbosity: u32,
                 client.flush().await?;
             },
             Some((polarity, loc, what)) = registrations.next() => {
-                let typ = if polarity { "registered" } else { "unregistered "};
+                let typ = if polarity { "registered" } else { "unregistered"};
                 send_response(&mut client,
                               json!({
                                   "type": typ,
@@ -461,6 +461,10 @@ async fn inner_client(verbosity: u32,
                                 return Err(errorize("Registered too many buildings at \
                                                      the same point"))
                             }
+                            if verbosity >= 1 {
+                                eprintln!("  {} registered a {:?} at {}",
+                                          peer, what, point)
+                            }
                         },
                         "unregister" => {
                             let x = expect_int(&message["x"])?;
@@ -468,6 +472,10 @@ async fn inner_client(verbosity: u32,
                             let what = expect_string(&message["what"])?;
                             let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             map.lock().unwrap().unregister(point, client_id, what);
+                            if verbosity >= 1 {
+                                eprintln!("  {} unregistered a {:?} at {}",
+                                          peer, what, point)
+                            }
                         },
                         x => return Err(errorize(&format!("Received a message with \
                                                            unknown type: {:?}", x)))
