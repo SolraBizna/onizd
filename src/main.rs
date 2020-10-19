@@ -534,15 +534,23 @@ async fn server_loop(invocation: Invocation)
     }
 }
 
-fn true_main(invocation: Invocation, mut termination: mpsc::Receiver<()>) {
+fn true_main(invocation: Invocation,
+             mut termination_tx: mpsc::Sender<()>,
+             mut termination_rx: mpsc::Receiver<()>) {
     eprintln!("Server starting up...");
     let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler().enable_all().build().unwrap();
     runtime.spawn(async move {
-        server_loop(invocation).await
+        match server_loop(invocation).await {
+            Ok(_) => (),
+            Err(x) => {
+                eprintln!("\n\nError! {}", x);
+            }
+        }
+        let _ = termination_tx.try_send(());
     });
     runtime.block_on(async {
-        termination.recv().await.unwrap()
+        termination_rx.recv().await.unwrap()
     });
     eprintln!("\n\nServer closing down...");
 }
@@ -560,9 +568,10 @@ fn main() {
         None => std::process::exit(1),
         Some(x) => x,
     };
-    let (mut termination_tx, termination_rx) = mpsc::channel(1);
+    let (termination_tx, termination_rx) = mpsc::channel(1);
+    let mut termination_tx_clone = termination_tx.clone();
     ctrlc::set_handler(move || {
-        let _ = termination_tx.try_send(());
+        let _ = termination_tx_clone.try_send(());
     }).unwrap();
-    true_main(invocation, termination_rx);
+    true_main(invocation, termination_tx, termination_rx);
 }
