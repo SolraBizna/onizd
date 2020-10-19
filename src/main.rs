@@ -537,8 +537,10 @@ async fn server_loop(invocation: Invocation)
 fn true_main(invocation: Invocation, mut termination: mpsc::Receiver<()>) {
     eprintln!("Server starting up...");
     let mut runtime = tokio::runtime::Builder::new()
-        .basic_scheduler().enable_io().build().unwrap();
-    runtime.spawn(server_loop(invocation));
+        .basic_scheduler().enable_all().build().unwrap();
+    runtime.spawn(async move {
+        server_loop(invocation).await
+    });
     runtime.block_on(async {
         termination.recv().await.unwrap()
     });
