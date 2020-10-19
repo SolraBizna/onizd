@@ -28,6 +28,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     io::AsyncReadExt,
     stream::StreamExt,
+    sync::mpsc,
     time::{timeout,interval},
     fs::File,
 };
@@ -38,6 +39,7 @@ use serde::{Serialize,Deserialize};
 use serde_json::{Value,json};
 #[cfg(feature = "auth")]
 use rand::{prelude::*, rngs::OsRng};
+use anyhow;
 
 mod invocation;
 pub use invocation::*;
@@ -53,6 +55,9 @@ mod wrapped;
 pub use wrapped::*;
 mod mit_zlib;
 pub use mit_zlib::{MitZlibReader, MitZlibWriter};
+
+#[cfg(feature = "gui")]
+mod gui;
 
 pub const DEFAULT_ADDR_AND_PORT: &str = "0.0.0.0:5496";
 #[cfg(feature = "auth")]
@@ -505,13 +510,10 @@ async fn client(verbosity: u32, ping_interval: Option<Duration>,
     map.lock().unwrap().unregister_all(client_id);
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let invocation = match get_invocation() {
-        None => std::process::exit(1),
-        Some(x) => x,
-    };
-    let listen_addr = invocation.listen_addr.unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
+async fn server_loop(invocation: Invocation)
+                     -> anyhow::Result<()> {
+    let listen_addr = invocation.listen_addr
+        .unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
     let map = Arc::new(Mutex::new(Map::new()));
     let mut listener = TcpListener::bind(&listen_addr).await?;
     let mut next_client_id: ClientID = 0;
@@ -524,8 +526,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let auth_file = invocation.auth_file.clone();
         let client_id = next_client_id;
         let ping_interval = invocation.ping_interval;
-        next_client_id = next_client_id.checked_add(1)
-            .expect("Can't have more than 2^64 clients in one session!"); // :)
-        tokio::spawn(client(verbosity, ping_interval, offset_mode, auth_file, map_clone, socket, peer, client_id));
+        next_client_id = next_client_id.checked_add(1) // :)
+            .expect("Can't have more than 2^64 clients in one session!");
+        tokio::spawn(client(verbosity, ping_interval, offset_mode,
+                            auth_file, map_clone, socket, peer,
+                            client_id));
     }
+}
+
+fn true_main(invocation: Invocation, mut termination: mpsc::Receiver<()>) {
+    eprintln!("Server starting up...");
+    let mut runtime = tokio::runtime::Builder::new()
+        .basic_scheduler().enable_io().build().unwrap();
+    runtime.spawn(server_loop(invocation));
+    runtime.block_on(async {
+        termination.recv().await.unwrap()
+    });
+    eprintln!("\n\nServer closing down...");
+}
+
+fn main() {
+    #[cfg(feature = "gui")]
+    {
+        let mut argsi = std::env::args();
+        // Start the GUI if we're started with no arguments.
+        if argsi.next().is_none() || argsi.next().is_none() {
+            return gui::go();
+        }
+    }
+    let invocation = match get_invocation() {
+        None => std::process::exit(1),
+        Some(x) => x,
+    };
+    let (mut termination_tx, termination_rx) = mpsc::channel(1);
+    ctrlc::set_handler(move || {
+        let _ = termination_tx.try_send(());
+    }).unwrap();
+    true_main(invocation, termination_rx);
 }
