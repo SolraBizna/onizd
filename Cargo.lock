@@ -662,6 +662,7 @@ dependencies = [
  "futures",
  "getopts",
  "gio",
+ "glib",
  "gtk",
  "lazy_static",
  "lsx",

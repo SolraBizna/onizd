@@ -2,6 +2,10 @@ onizd is the server component of [ZTransport][1], a mod for Oxygen Not Included.
 
 [1]: https://github.com/BloodyRum/ZTransport
 
+# Quick Start
+
+If you're on Windows and you don't want to compile this yourself, soon you will be able to visit [the Releases page](https://github.com/SolraBizna/onizd/releases) and download a prebuilt Windows version. But, for now, you're out of luck. Soon, I promise...
+
 # Compiling
 
 Install Rust, if you don't have it already. Installing Rust is pretty simple if you follow [these directions][2].
@@ -16,20 +20,29 @@ git clone https://github.com/SolraBizna/onizd
 
 # Running
 
+If you want to run the GUI version:
+
+```sh
+cd onizd
+cargo run --release --features gui
+```
+
+Chances are the GUI version is good enough for your needs. But, if you want the command line version instead:
+
 ```sh
 cd onizd
 cargo run --release --
 ```
 
-Any additional command line arguments you want go after the `--`. Pass `--help` to see a list of command line arguments.
+Any additional command line arguments you want go after the `--`. Pass `--help` after the `--` to see a list of command line arguments.
 
 Example:
 
 ```sh
-cargo run --release -- -v -a ~/secret_photo.jpeg
+cargo run --release -- -v
 ```
 
-This example will print some information every time something passes (or tries to pass) the Z barrier, many times per second. It will also require authentication, using `secret_photo.jpeg` as the shared secret. (NOTE: the current version of the client does not support authentication, and the way authentication works will change in the future!)
+This example will print some information every time something passes (or tries to pass) the Z barrier, many times per second.
 
 # Legalese
 

@@ -17,19 +17,27 @@
  *
  */
 
+// Note: Any time you see `writeln!(out, ...).unwrap()`, it's because
+// `Outputter::write_str` cannot throw errors.
+
 use std::{
     convert::{TryFrom,TryInto},
-    io::SeekFrom,
     net::SocketAddr,
     sync::{Arc,Mutex},
     time::Duration,
+    fmt::Write,
 };
+#[cfg(feature = "auth")]
+use std::io::SeekFrom;
 use tokio::{
     net::{TcpListener, TcpStream},
-    io::AsyncReadExt,
     stream::StreamExt,
     sync::mpsc,
     time::{timeout,interval},
+};
+#[cfg(feature = "auth")]
+use tokio::{
+    io::AsyncReadExt,
     fs::File,
 };
 use futures::sink::SinkExt;
@@ -55,6 +63,8 @@ mod wrapped;
 pub use wrapped::*;
 mod mit_zlib;
 pub use mit_zlib::{MitZlibReader, MitZlibWriter};
+mod outputter;
+pub use outputter::*;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -113,6 +123,7 @@ async fn send_response(socket: &mut Client, mut json: Value,
 
 pub struct MessageCoder {
     verbosity: u32,
+    out: Outputter,
 }
 impl codec::Decoder for MessageCoder {
     type Item = Value;
@@ -133,7 +144,7 @@ impl codec::Decoder for MessageCoder {
                     Ok(x) => match x {
                         Value::Object(_) => {
                             if self.verbosity >= 2 {
-                                eprintln!("    → {}", x);
+                                writeln!(self.out, "    → {}", x).unwrap();
                             }
                             return Ok(Some(x))
                         },
@@ -154,7 +165,7 @@ impl codec::Encoder<Value> for MessageCoder {
               -> std::io::Result<()> {
         let s = json.to_string();
         if self.verbosity >= 2 {
-            eprintln!("    ← {}", s);
+            writeln!(self.out, "    ← {}", s).unwrap();
         }
         let b = s.as_bytes();
         dst.reserve(b.len() + 1);
@@ -165,7 +176,8 @@ impl codec::Encoder<Value> for MessageCoder {
 }
 type Client = codec::Framed<WrappedSocket, MessageCoder>;
 
-async fn inner_client(verbosity: u32,
+async fn inner_client(out: &mut Outputter,
+                      verbosity: u32,
                       ping_interval: Option<Duration>,
                       offset_mode: bool,
                       auth_file: Option<String>,
@@ -175,7 +187,9 @@ async fn inner_client(verbosity: u32,
                       client_id: ClientID)
                       -> std::io::Result<()> {
     socket.set_nodelay(true)?;
-    let mut client = codec::Framed::new(socket, MessageCoder { verbosity });
+    let mut client = codec::Framed::new(socket, MessageCoder {
+        verbosity, out: out.clone()
+    });
     let recv_offset_y = if offset_mode { 1 } else { 0 };
     // make sure our client talks the right protocol at us
     // TODO: make the timeout duration configurable
@@ -281,10 +295,10 @@ async fn inner_client(verbosity: u32,
             }
         }
         if ok_auths != NUM_CHALLENGES {
-            eprintln!("  {} AUTHENTICATION FAILED!!!", peer);
+            writeln!(out, "  {} AUTHENTICATION FAILED!!!", peer).unwrap();
             if ok_auths != 0 {
-                eprintln!("    WARNING!!! Passed {}/{} auths!", ok_auths,
-                          NUM_CHALLENGES);
+                writeln!(out, "    WARNING!!! Passed {}/{} auths!", ok_auths,
+                          NUM_CHALLENGES).unwrap();
             }
             send_response(&mut client,
                           json!({
@@ -294,11 +308,11 @@ async fn inner_client(verbosity: u32,
             return Ok(())
         }
         else {
-            eprintln!("  {} AUTHENTICATED", peer);
+            writeln!(out, "  {} AUTHENTICATED", peer).unwrap();
         }
     }
     else {
-        eprintln!("  {} AUTHENTICATED (no auth needed)", peer);
+        writeln!(out, "  {} AUTHENTICATED (no auth needed)", peer).unwrap();
     }
     #[cfg(not(feature = "auth"))]
     std::mem::drop(auth_file); // normally dropped by the above
@@ -371,12 +385,14 @@ async fn inner_client(verbosity: u32,
                                           }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 if spare > 0 {
-                                    eprintln!("  {} sent {}J to {} ({}J spared)",
-                                              peer, joules, point, spare)
+                                    writeln!(out, "  {} sent {}J to {} ({}J \
+                                                   spared)",
+                                             peer, joules, point, spare)
+                                        .unwrap();
                                 }
                                 else {
-                                    eprintln!("  {} sent {}J to {}",
-                                              peer, joules, point)
+                                    writeln!(out, "  {} sent {}J to {}",
+                                              peer, joules, point).unwrap();
                                 }
                             }
                         },
@@ -395,8 +411,10 @@ async fn inner_client(verbosity: u32,
                                               "joules": joules,
                                           }), &message["cookie"]).await?;
                             if verbosity >= 1 {
-                                eprintln!("  {} wanted up to {}J from {} ({}J gotten)",
-                                          peer, max_joules, point, joules)
+                                writeln!(out, "  {} wanted up to {}J from {} \
+                                               ({}J gotten)",
+                                         peer, max_joules, point, joules)
+                                    .unwrap();
                             }
                         },
                         "send_packet" => {
@@ -420,12 +438,15 @@ async fn inner_client(verbosity: u32,
                                           }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 if accepted {
-                                    eprintln!("  {} put {} {} in {}",
-                                              peer, phase, packet, point)
+                                    writeln!(out, "  {} put {} {} in {}",
+                                             peer, phase, packet, point)
+                                        .unwrap();
                                 }
                                 else {
-                                    eprintln!("  {} put {} {} in {} (rejected!)",
-                                              peer, phase, packet, point)
+                                    writeln!(out, "  {} put {} {} in {} \
+                                                   (rejected!)",
+                                             peer, phase, packet, point)
+                                        .unwrap();
                                 }
                             }
                         },
@@ -446,14 +467,14 @@ async fn inner_client(verbosity: u32,
                             if verbosity >= 1 {
                                 match packet {
                                     Some(packet) =>
-                                        eprintln!("  {} sunk {} from {} \
+                                        writeln!(out, "  {} sunk {} from {} \
                                                    (got {})",
                                                   peer, phase, point, packet),
                                     None =>
-                                        eprintln!("  {} sunk {} from {} \
+                                        writeln!(out, "  {} sunk {} from {} \
                                                    (got nothing)",
                                                   peer, phase, point),
-                                }
+                                }.unwrap();
                             }
                         },
                         "register" => {
@@ -467,8 +488,8 @@ async fn inner_client(verbosity: u32,
                                                      the same point"))
                             }
                             if verbosity >= 1 {
-                                eprintln!("  {} registered a {:?} at {}",
-                                          peer, what, point)
+                                writeln!(out, "  {} registered a {:?} at {}",
+                                          peer, what, point).unwrap();
                             }
                         },
                         "unregister" => {
@@ -478,39 +499,42 @@ async fn inner_client(verbosity: u32,
                             let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             map.lock().unwrap().unregister(point, client_id, what);
                             if verbosity >= 1 {
-                                eprintln!("  {} unregistered a {:?} at {}",
-                                          peer, what, point)
+                                writeln!(out, "  {} unregistered a {:?} at {}",
+                                          peer, what, point).unwrap();
                             }
                         },
-                        x => return Err(errorize(&format!("Received a message with \
-                                                           unknown type: {:?}", x)))
+                        x => return Err(errorize(&format!("Received a message \
+                                                           with unknown type: \
+                                                           {:?}", x)))
                     }
                     client.flush().await?;
                 }
                 else {
-                    return Err(errorize("Received a message with invalid type"))
+                    return Err(errorize("Received a message with invalid \
+                                         type"))
                 }
             },
         }
     }
 }
 
-async fn client(verbosity: u32, ping_interval: Option<Duration>,
+async fn client(mut out: Outputter,
+                verbosity: u32, ping_interval: Option<Duration>,
                 offset_mode: bool, auth_file: Option<String>,
                 map: Arc<Mutex<Map>>, socket: TcpStream, peer: SocketAddr,
                 client_id: ClientID) {
-    match inner_client(verbosity, ping_interval, offset_mode, auth_file, &map,
-                       socket, &peer, client_id)
+    match inner_client(&mut out, verbosity, ping_interval, offset_mode,
+                       auth_file, &map, socket, &peer, client_id)
     .await {
         Ok(()) =>
-            eprintln!("  {} DISCONNECTED", peer),
+            writeln!(out, "  {} DISCONNECTED", peer),
         Err(x) =>
-            eprintln!("  {} ERROR: {}", peer, x),
-    }
+            writeln!(out, "  {} ERROR: {}", peer, x),
+    }.unwrap();
     map.lock().unwrap().unregister_all(client_id);
 }
 
-async fn server_loop(invocation: Invocation)
+async fn server_loop(invocation: Invocation, out: &mut Outputter)
                      -> anyhow::Result<()> {
     let listen_addr = invocation.listen_addr
         .unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
@@ -519,7 +543,7 @@ async fn server_loop(invocation: Invocation)
     let mut next_client_id: ClientID = 0;
     loop {
         let (socket, peer) = listener.accept().await?;
-        eprintln!("{} CONNECTED", peer);
+        writeln!(out, "{} CONNECTED", peer).unwrap();
         let map_clone = map.clone();
         let verbosity = invocation.verbosity;
         let offset_mode = invocation.offset_mode;
@@ -528,7 +552,7 @@ async fn server_loop(invocation: Invocation)
         let ping_interval = invocation.ping_interval;
         next_client_id = next_client_id.checked_add(1) // :)
             .expect("Can't have more than 2^64 clients in one session!");
-        tokio::spawn(client(verbosity, ping_interval, offset_mode,
+        tokio::spawn(client(out.clone(), verbosity, ping_interval, offset_mode,
                             auth_file, map_clone, socket, peer,
                             client_id));
     }
@@ -536,23 +560,26 @@ async fn server_loop(invocation: Invocation)
 
 fn true_main(invocation: Invocation,
              mut termination_tx: mpsc::Sender<()>,
-             mut termination_rx: mpsc::Receiver<()>) {
-    eprintln!("Server starting up...");
+             mut termination_rx: mpsc::Receiver<()>,
+             mut out: Outputter) {
+    writeln!(out, "\n\nServer starting up...").unwrap();
     let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler().enable_all().build().unwrap();
+    let mut out_clone = out.clone();
     runtime.spawn(async move {
-        match server_loop(invocation).await {
+        match server_loop(invocation, &mut out_clone).await {
             Ok(_) => (),
             Err(x) => {
-                eprintln!("\n\nError! {}", x);
+                writeln!(out_clone, "\n\nError! {}", x).unwrap();
             }
         }
+        // improve odds that we terminate ourselves gracefully
         let _ = termination_tx.try_send(());
     });
     runtime.block_on(async {
         termination_rx.recv().await.unwrap()
     });
-    eprintln!("\n\nServer closing down...");
+    writeln!(out, "\n\nServer closing down...").unwrap();
 }
 
 fn main() {
@@ -573,5 +600,5 @@ fn main() {
     ctrlc::set_handler(move || {
         let _ = termination_tx_clone.try_send(());
     }).unwrap();
-    true_main(invocation, termination_tx, termination_rx);
+    true_main(invocation, termination_tx, termination_rx, Outputter::Stderr);
 }

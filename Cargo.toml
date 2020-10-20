@@ -22,9 +22,9 @@ authors = ["Solra Bizna <solra@bizna.name>"]
 edition = "2018"
 
 [features]
-default = ["auth"]
+default = []
 auth = ["rand", "base64"]
-gui = ["gtk", "gio"]
+gui = ["gtk", "gio", "glib"]
 
 [dependencies]
 anyhow = "1.0"
@@ -50,4 +50,8 @@ optional = true
 [dependencies.gio]
 version = ""
 features = ["v2_44"]
+optional = true
+
+[dependencies.glib]
+version = ""
 optional = true
