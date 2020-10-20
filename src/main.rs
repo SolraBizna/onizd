@@ -20,7 +20,10 @@
 // Note: Any time you see `writeln!(out, ...).unwrap()`, it's because
 // `Outputter::write_str` cannot throw errors.
 
-#![windows_subsystem = "windows"]
+#![cfg_attr(
+    feature = "gui",
+    windows_subsystem = "windows"
+)]
 
 use std::{
     convert::{TryFrom,TryInto},
