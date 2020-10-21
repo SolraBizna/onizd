@@ -2,11 +2,13 @@ onizd is the server component of [ZTransport][1], a mod for Oxygen Not Included.
 
 [1]: https://github.com/BloodyRum/ZTransport
 
-# Quick Start
+# Windows Usage
 
 If you're on Windows, all you need is to go straight to [the Releases page](https://github.com/SolraBizna/onizd/releases) and download a prebuilt, graphical Windows version.
 
-# Compiling
+# Other OSes (Linux, macOS...)
+
+## Compiling
 
 Install Rust, if you don't have it already. Installing Rust is pretty simple if you follow [these directions][2].
 
@@ -18,7 +20,7 @@ git clone https://github.com/SolraBizna/onizd
 
 [2]: https://www.rust-lang.org/learn/get-started
 
-# Running
+## Running
 
 If you want to run the GUI version:
 
