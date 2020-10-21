@@ -4,7 +4,7 @@ onizd is the server component of [ZTransport][1], a mod for Oxygen Not Included.
 
 # Quick Start
 
-If you're on Windows and you don't want to compile this yourself, soon you will be able to visit [the Releases page](https://github.com/SolraBizna/onizd/releases) and download a prebuilt Windows version. But, for now, you're out of luck. Soon, I promise...
+If you're on Windows, all you need is to go straight to [the Releases page](https://github.com/SolraBizna/onizd/releases) and download a prebuilt, graphical Windows version.
 
 # Compiling
 
