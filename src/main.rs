@@ -79,6 +79,8 @@ pub const DEFAULT_ADDR_AND_PORT: &str = "0.0.0.0:5496";
 pub const AUTH_BYTE_SIZE: usize = 5496;
 #[cfg(feature = "auth")]
 pub const NUM_CHALLENGES: usize = 3;
+/// The list of version numbers this version of the server will support.
+pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1];
 
 pub type ClientID = u64;
 
@@ -210,35 +212,77 @@ async fn inner_client(out: &mut Outputter,
         Value::String(ref x) if x == "hello" => (),
         _ => return Err(errorize("no \"hello\" in handshake")),
     }
-    let mut client = wrap_client(client,
-                                 serde_json::from_value
-                                 ::<Option<CompressionType>>
-                                 (message["compression"].clone())?).await?;
+    let compression_type = match serde_json::from_value
+        ::<Option<CompressionType>>(message["compression"].clone()) {
+            Ok(x) => x,
+            Err(_) => {
+                let mut client = wrap_client(client, None).await?;
+                let _ = send_response(&mut client,
+                                      json!({
+                                          "type": "handshake_error",
+                                          "what": "compression_type_unknown",
+                                          "supported_compression_types":
+                                            ["Zlib"],
+                                      }), &Value::Null).await;
+                let _ = client.flush().await;
+                return Err(errorize("client requested an unknown compression \
+                                     type"))
+            },
+        };
+    let mut client = wrap_client(client, compression_type).await?;
     match message["proto"] {
         Value::String(ref x) if x == "oniz" => (),
-        _ => return Err(errorize("handshake is for wrong protocol")),
-    }
-    let proto_version = match &message["version"] {
-        Value::Number(x) => match x.as_i64() {
-            Some(x) => x,
-            None => return Err(errorize("crazy \"version\" in handshake"))
-        },
-        _ => return Err(errorize("no \"version\" in handshake")),
-    };
-    match proto_version {
-        0 => (), // OK
-        x => {
+        _ => {
             // (ignore an error sending this response)
             let _ = send_response(&mut client,
                                   json!({
-                                      "type": "bad_version",
-                                      "supported_versions": [0],
+                                      "type": "handshake_error",
+                                      "what": "unknown_protocol",
+                                      "supported_protocols": ["oniz"],
                                   }), &Value::Null).await;
             let _ = client.flush().await;
-            return Err(errorize(&format!("wanted unknown protocol version {}",
-                                         x)))
-        },
+            return Err(errorize("handshake is for wrong protocol"));
+        }
     }
+    let (_proto_version, _may_send_handshake_error) = {
+        let proto_version = match &message["version"] {
+            Value::Number(x) => match x.as_i64() {
+                Some(x) => Some(x),
+                None => None,
+            },
+            _ => None,
+        };
+        let result = match proto_version {
+            // Like version 1, except the client will crash if we send
+            // `handshake_error`
+            Some(0) => Ok((1, false)),
+            // Current version
+            Some(1) => Ok((1, true)),
+            // Older versions
+            Some(x) if x < 0 => Err(("version_too_old", "client is too old")),
+            // Newer versions
+            Some(_) => Err(("version_too_new",
+                            "client is too new, you must upgrade this \
+                             server")),
+            // Nonsense versions
+            None => Err(("bad_version", "nonsense \"version\" in handshake")),
+        };
+        match result {
+            Err((proto_err, human_err)) => {
+                // (ignore an error sending this response)
+                let _ = send_response(&mut client,
+                                      json!({
+                                          "type": "handshake_error",
+                                          "what": proto_err,
+                                          "supported_versions":
+                                            SUPPORTED_VERSIONS,
+                                      }), &Value::Null).await;
+                let _ = client.flush().await;
+                return Err(errorize(human_err))
+            },
+            Ok(x) => x,
+        }
+    };
     #[cfg(feature = "auth")]
     if let Some(path) = auth_file {
         let mut file = File::open(path).await?;
