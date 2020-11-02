@@ -237,7 +237,7 @@ impl Controller {
         } else { None };
         let verbosity = if self.verbose_checkbox.get_active() { 1 } else { 0 };
         Ok(Invocation { listen_addr, ping_interval, verbosity,
-                        offset_mode: false, auth_file: None })
+                        offset_mode: false, auth_file: None, save_file: None })
     }
 }
 

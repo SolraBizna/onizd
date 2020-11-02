@@ -31,6 +31,7 @@ use std::{
     sync::{Arc,Mutex},
     time::Duration,
     fmt::Write,
+    fs,
 };
 #[cfg(feature = "auth")]
 use std::io::SeekFrom;
@@ -87,6 +88,10 @@ pub const MAX_OBJECT_SIZE: usize = 1024;
 /// The maximum number of characters an opaque object small enough to store can
 /// take up when Base64 encoded.
 pub const MAX_OBJECT_ENCODED_SIZE: usize = (MAX_OBJECT_SIZE + 2) * 4 / 3;
+/// Suffix to add to a filename when making a backup.
+pub const BACKUP_SUFFIX: &str = "~";
+/// Suffix to add to a filename when writing.
+pub const TEMP_SUFFIX: &str = "^";
 
 pub type ClientID = u64;
 
@@ -664,11 +669,11 @@ async fn client(mut out: Outputter,
     map.lock().unwrap().unregister_all(client_id);
 }
 
-async fn server_loop(invocation: Invocation, out: &mut Outputter)
+async fn server_loop(invocation: Invocation, out: &mut Outputter,
+                     map: Arc<Mutex<Map>>)
                      -> anyhow::Result<()> {
     let listen_addr = invocation.listen_addr
         .unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
-    let map = Arc::new(Mutex::new(Map::new()));
     let mut listener = TcpListener::bind(&listen_addr).await?;
     let mut next_client_id: ClientID = 0;
     loop {
@@ -696,8 +701,33 @@ fn true_main(invocation: Invocation,
     let mut runtime = tokio::runtime::Builder::new()
         .basic_scheduler().enable_all().build().unwrap();
     let mut out_clone = out.clone();
+    let map = Arc::new(Mutex::new(Map::new()));
+    match invocation.save_file {
+        None => (),
+        Some(ref path) => {
+            let mut map = map.lock().unwrap();
+            match map.try_load(path)
+            .or_else(|_| map.try_load(&(path.to_owned() + BACKUP_SUFFIX))) {
+                Ok(_) => writeln!(out, "Successfully loaded the map."),
+                Err(x) => {
+                    map.clear();
+                    if x.kind() == std::io::ErrorKind::NotFound {
+                        writeln!(out, "Selected map file did not exist.\n\
+                                       Starting with a blank map.")
+                    }
+                    else {
+                        writeln!(out, "Unable to load map from requested \
+                                       file: {}\nStarting with a blank map.",
+                                 x)
+                    }
+                }
+            }.unwrap()
+        },
+    }
+    let map_clone = map.clone();
+    let invocation_clone = invocation.clone();
     runtime.spawn(async move {
-        match server_loop(invocation, &mut out_clone).await {
+        match server_loop(invocation_clone, &mut out_clone, map_clone).await {
             Ok(_) => (),
             Err(x) => {
                 writeln!(out_clone, "\n\nError! {}", x).unwrap();
@@ -710,6 +740,29 @@ fn true_main(invocation: Invocation,
         termination_rx.recv().await.unwrap()
     });
     writeln!(out, "\n\nServer closing down...").unwrap();
+    match invocation.save_file {
+        None => (),
+        Some(ref path) => {
+            let temp_path = path.to_owned() + TEMP_SUFFIX;
+            match map.lock().unwrap().try_save(&temp_path) {
+                Ok(_) => {
+                    let backup_path = path.to_owned() + BACKUP_SUFFIX;
+                    match fs::rename(path, &backup_path) {
+                        Ok(_) => (),
+                        Err(x) => writeln!(out, "Error backing up map file: \
+                                                 {}", x).unwrap(),
+                    }
+                    match fs::rename(&temp_path, path) {
+                        Ok(_) => writeln!(out, "Map saved successfully."),
+                        Err(x) => writeln!(out, "Error moving new map file \
+                                                 into place: {}", x),
+                    }
+                },
+                Err(x) =>
+                    writeln!(out, "Error while saving map: {}", x),
+            }.unwrap();
+        }
+    }
 }
 
 fn main() {

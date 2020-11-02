@@ -19,8 +19,10 @@
 
 use std::{
     collections::hash_map::{HashMap,Entry},
+    fs::File,
 };
 use tokio::sync::mpsc;
+use std::io::Result as IoResult;
 
 use crate::*;
 
@@ -313,5 +315,153 @@ impl Map {
             }
         }
     }
+    /// Clears everything on the map.
+    pub fn clear(&mut self) {
+        self.energy = HashMap::new();
+        self.gas_packets = HashMap::new();
+        self.liquid_packets = HashMap::new();
+        self.objects = HashMap::new();
+        self.registrations = HashMap::new();
+    }
+    /// Attempts to initialize the map with saved data from the given path.
+    /// May leave the map in a partly-populated state on failure; you should
+    /// call `clear` if that happens.
+    pub fn try_load(&mut self, path: &str) -> IoResult<()> {
+        self.clear();
+        let mut file = File::open(path)?;
+        let value = serde_json::from_reader(&mut file)?;
+        drop(file);
+        let value = match value {
+            Value::Object(x) => x,
+            _ => return Err(errorize("saved map is not a JSON object"))
+        };
+        for (k,v) in value.into_iter() {
+            let mut kit = k.split(",");
+            let (x, y) = match (kit.next(), kit.next(), kit.next()) {
+                (Some(x), Some(y), None) => (x, y),
+                _ => continue, // skip invalid points
+            };
+            let (x, y) = match (x.parse::<i32>(), y.parse::<i32>()) {
+                (Ok(x), Ok(y)) => (x, y),
+                _ => continue,
+            };
+            let point = Point::new(x, y);
+            let tile = match v {
+                Value::Object(x) => x,
+                _ => continue, // skip invalid tiles
+            };
+            match tile.get("energy") {
+                Some(Value::Number(x)) if x.is_u64() =>
+                    match x.as_u64().unwrap().try_into() {
+                        Ok(x) => { self.add_joules(point, x); },
+                        _ => (),
+                    },
+                _ => (),
+            };
+            match tile.get("gas_packets") {
+                Some(Value::Array(x)) => {
+                    for packet in x.iter() {
+                        let packet = match serde_json::from_value::<MatPacket>(packet.clone()) {
+                            Ok(x) => x,
+                            Err(_) => continue,
+                        };
+                        self.add_packet(point, &packet, Phase::Gas);
+                    }
+                },
+                _ => (),
+            };
+            match tile.get("liquid_packets") {
+                Some(Value::Array(x)) => {
+                    for packet in x.iter() {
+                        let packet = match serde_json::from_value::<MatPacket>(packet.clone()) {
+                            Ok(x) => x,
+                            Err(_) => continue,
+                        };
+                        self.add_packet(point, &packet, Phase::Liquid);
+                    }
+                },
+                _ => (),
+            };
+            match tile.get("objects") {
+                Some(Value::Array(x)) => {
+                    for object in x.iter() {
+                        let object = match object {
+                            Value::String(x) => x,
+                            _ => continue,
+                        };
+                        if object.len() > MAX_OBJECT_ENCODED_SIZE { continue }
+                        let decoded = match base64::decode(object) {
+                            Ok(x) if x.len() <= MAX_OBJECT_SIZE => { x },
+                            _ => continue,
+                        };
+                        self.add_object(point, decoded);
+                    }
+                },
+                _ => (),
+            };
+        }
+        Ok(())
+    }
+    /// Attempt to save the map to the given path.
+    pub fn try_save(&self, path: &str) -> IoResult<()> {
+        let mut saved: serde_json::Map<String, Value> = serde_json::Map::new();
+        for (k, v) in self.energy.iter() {
+            if *v > 0 {
+                set_tile_key(&mut saved, *k, "energy",
+                             Value::Number((*v).into()))
+            }
+        }
+        for (k, v) in self.gas_packets.iter() {
+            if v.len() > 0 {
+                let mut arr = Vec::new();
+                for packet in v.iter() {
+                    arr.push(serde_json::to_value(packet)?);
+                }
+                set_tile_key(&mut saved, *k, "gas_packets",
+                             Value::Array(arr))
+            }
+        }
+        for (k, v) in self.liquid_packets.iter() {
+            if v.len() > 0 {
+                let mut arr = Vec::new();
+                for packet in v.iter() {
+                    arr.push(serde_json::to_value(packet)?);
+                }
+                set_tile_key(&mut saved, *k, "liquid_packets",
+                             Value::Array(arr))
+            }
+        }
+        for (k, v) in self.objects.iter() {
+            if v.len() > 0 {
+                let mut arr = Vec::new();
+                for object in v.iter() {
+                    arr.push(Value::String(base64::encode(object)));
+                }
+                set_tile_key(&mut saved, *k, "objects",
+                             Value::Array(arr))
+            }
+        }
+        let mut file = File::create(path)?;
+        serde_json::to_writer(&mut file, &Value::Object(saved))?;
+        Ok(())
+    }
 }
 
+fn set_tile_key(saved: &mut serde_json::Map<String, Value>, point: Point,
+                key: &str, value: Value) {
+    let point = point.as_string();
+    match saved.entry(point) {
+        serde_json::map::Entry::Vacant(entry) => {
+            let mut map = serde_json::Map::new();
+            map.insert(key.to_owned(), value);
+            entry.insert(Value::Object(map));
+        },
+        serde_json::map::Entry::Occupied(mut obj) => {
+            let v = obj.get_mut();
+            match v {
+                Value::Object(map) => { map.insert(key.to_owned(), value); },
+                _ => panic!("we confused ourselves while saving!"),
+            }
+        },
+    }
+}

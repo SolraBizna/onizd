@@ -42,4 +42,5 @@ impl Point {
     }
     pub fn get_x(&self) -> i32 { self.x }
     pub fn get_y(&self) -> i32 { self.y }
+    pub fn as_string(&self) -> String { format!("{},{}", self.x, self.y) }
 }

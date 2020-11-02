@@ -20,10 +20,11 @@
 use std::time::Duration;
 use std::convert::TryInto;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Invocation {
     pub listen_addr: Option<String>,
     pub auth_file: Option<String>,
+    pub save_file: Option<String>,
     pub offset_mode: bool,
     pub verbosity: u32,
     pub ping_interval: Option<Duration>,
@@ -46,6 +47,7 @@ pub fn get_invocation() -> Option<Invocation> {
     opts.optflagmulti("v", "verbose", "Print information every time something happens (lots!). Specify twice to print every received packet.");
     #[cfg(feature = "auth")]
     opts.optopt("a", "auth-file", "Specify the shared secret file to use for authentication. If absent, authentication will not be used.", "FILE");
+    opts.optopt("s", "save-file", "Specify a JSON file in which to save and restore the map state.", "FILE");
     opts.optopt("p", "ping-interval", "Send a \"ping\" message to each client roughly this often. This can help deal with broken NAT routers that aggressively drop idle connections.", "SECONDS");
     opts.optflag("?", "help", "Print this help string.");
     let matches = match opts.parse(&args[1..]) {
@@ -68,6 +70,7 @@ pub fn get_invocation() -> Option<Invocation> {
                                                                  -v count"),
             auth_file: if cfg!(feature = "auth") { matches.opt_str("a") }
             else { None },
+            save_file: matches.opt_str("s"),
             ping_interval: match matches.opt_str("p") {
                 None => None,
                 Some(x) => match x.parse() {
