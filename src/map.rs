@@ -37,6 +37,11 @@ pub const MAX_STORED_PACKETS: usize = 10; // probably too high
 /// Maximum number of registrations allowed with the same `ClientID` at one
 /// point on the map.
 pub const MAX_REGISTRATIONS: usize = 7;
+/// Maximum number of opaque objects that can be stored in one point on the
+/// map. This will limit the maximum transmission rate of solid objects,
+/// related to ping. Unlike energy and packets, we can't combine "stackable"
+/// objects. Hopefully that doesn't end up being much of a problem.
+pub const MAX_STORED_OBJECTS: usize = 3;
 
 struct RegSender {
     vec: Vec<mpsc::UnboundedSender<(bool, Point, String)>>
@@ -58,11 +63,12 @@ impl RegSender {
 }
 
 /// Contains all the state for the "interlayer" map. Incorporates temporary
-/// storage for energy, <del>solids</del>, liquids, and gases.
+/// storage for energy, solids, liquids, and gases.
 pub struct Map {
     energy: HashMap<Point, u32>,
     gas_packets: HashMap<Point, Vec<MatPacket>>,
     liquid_packets: HashMap<Point, Vec<MatPacket>>,
+    objects: HashMap<Point, Vec<Vec<u8>>>,
     registrations: HashMap<Point, Vec<(ClientID, String)>>,
     registration_senders: RegSender,
 }
@@ -74,6 +80,7 @@ impl Map {
             energy: HashMap::new(),
             gas_packets: HashMap::new(),
             liquid_packets: HashMap::new(),
+            objects: HashMap::new(),
             registrations: HashMap::new(),
             registration_senders: RegSender::new(),
         }
@@ -271,6 +278,40 @@ impl Map {
         }
         self.registration_senders.push(tx);
         rx
+    }
+    /// Attempts to add an opaque object to the map at the given point. Returns
+    /// only `true` (the object was entirely accepted) or `false` (the object
+    /// was entirely rejected).
+    pub fn add_object(&mut self, loc: Point, object: Vec<u8>) -> bool {
+        let entry = self.objects.entry(loc);
+        match entry {
+            Entry::Vacant(entry) => {
+                let mut vec = Vec::with_capacity(MAX_STORED_OBJECTS);
+                vec.push(object);
+                entry.insert(vec);
+                return true;
+            },
+            Entry::Occupied(mut entry) => {
+                let vec = entry.get_mut();
+                let len = vec.len();
+                if len >= MAX_STORED_OBJECTS { return false }
+                vec.push(object);
+                return true;
+            }
+        }
+    }
+    /// Attempts to remove an opaque object from the map at the given point.
+    /// Returns `None` if there was no object, or `Some(...)` if there was.
+    pub fn pop_object(&mut self, loc: Point) -> Option<Vec<u8>> {
+        let entry = self.objects.entry(loc);
+        match entry {
+            Entry::Vacant(_) => None,
+            Entry::Occupied(mut entry) => {
+                let vec = entry.get_mut();
+                if vec.is_empty() { None }
+                else { Some(vec.remove(0)) }
+            }
+        }
     }
 }
 

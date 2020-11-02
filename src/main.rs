@@ -80,7 +80,13 @@ pub const AUTH_BYTE_SIZE: usize = 5496;
 #[cfg(feature = "auth")]
 pub const NUM_CHALLENGES: usize = 3;
 /// The list of version numbers this version of the server will support.
-pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1];
+pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1, 2];
+/// The maximum size an opaque object is allowed to be. This reflects the raw
+/// binary size.
+pub const MAX_OBJECT_SIZE: usize = 1024;
+/// The maximum number of characters an opaque object small enough to store can
+/// take up when Base64 encoded.
+pub const MAX_OBJECT_ENCODED_SIZE: usize = (MAX_OBJECT_SIZE + 2) * 4 / 3;
 
 pub type ClientID = u64;
 
@@ -255,9 +261,16 @@ async fn inner_client(out: &mut Outputter,
         let result = match proto_version {
             // Like version 1, except the client will crash if we send
             // `handshake_error`
-            Some(0) => Ok((1, false)),
-            // Current version
-            Some(1) => Ok((1, true)),
+            Some(0) => Ok((2, false)),
+            // Current version... sort of.
+            // We support current versions identically. We would accept a
+            // `send_object` message from a version 1 (or even 0) client, for
+            // example. The main reason to bump the version number to 2 after
+            // adding the object messages was to stop new clients (that support
+            // `send_object` et. al.) from trying to send objects to old
+            // servers (that will crash with an unfriendly message if they
+            // receive one).
+            Some(1) | Some(2) => Ok((2, true)),
             // Older versions
             Some(x) if x < 0 => Err(("version_too_old", "client is too old")),
             // Newer versions
@@ -523,6 +536,74 @@ async fn inner_client(out: &mut Outputter,
                                         writeln!(out, "  {} sunk {} from {} \
                                                    (got nothing)",
                                                   peer, phase, point),
+                                }.unwrap();
+                            }
+                        },
+                        "send_object" => {
+                            let x = expect_int(&message["x"])?;
+                            let y = expect_int(&message["y"])?;
+                            let base64_object = expect_string(&message["object"])?;
+                            if base64_object.len() > MAX_OBJECT_ENCODED_SIZE {
+                                return Err(errorize("Received object was too \
+                                                     many bytes long"))
+                            }
+                            let raw_object = match base64::decode(base64_object) {
+                                Ok(x) => x,
+                                Err(_) =>
+                                    return Err(errorize("Received object was \
+                                                         invalid Base64"))
+                            };
+                            if raw_object.len() > MAX_OBJECT_SIZE {
+                                return Err(errorize("Received object was too \
+                                                     many bytes long"))
+                            }
+                            let point = Point::new(x, y);
+                            let accepted = map.lock().unwrap()
+                                .add_object(point, raw_object);
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "sent_object",
+                                              "x": x,
+                                              "y": y,
+                                              "accepted": accepted
+                                          }), &message["cookie"]).await?;
+                            if verbosity >= 1 {
+                                if accepted {
+                                    writeln!(out, "  {} put an object in {}",
+                                             peer, point)
+                                        .unwrap();
+                                }
+                                else {
+                                    writeln!(out, "  {} put an object in {} \
+                                                   (rejected!)",
+                                             peer, point)
+                                        .unwrap();
+                                }
+                            }
+                        },
+                        "recv_object" => {
+                            let x = expect_int(&message["x"])?;
+                            let y = expect_int::<i32>(&message["y"])?;
+                            let point = Point::new(x, y + recv_offset_y);
+                            let object = map.lock().unwrap().pop_object(point)
+                                .map(base64::encode);
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "got_object",
+                                              "x": x,
+                                              "y": y,
+                                              "object": object,
+                                          }), &message["cookie"]).await?;
+                            if verbosity >= 1 {
+                                match object {
+                                    Some(_) =>
+                                        writeln!(out, "  {} sunk an object \
+                                                       from {} (got one)",
+                                                  peer, point),
+                                    None =>
+                                        writeln!(out, "  {} sunk an object \
+                                                       from {} (got nothing)",
+                                                 peer, point),
                                 }.unwrap();
                             }
                         },

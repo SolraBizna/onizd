@@ -23,7 +23,7 @@ edition = "2018"
 
 [features]
 default = []
-auth = ["rand", "base64"]
+auth = ["rand"]
 gui = ["gtk", "gio", "glib"]
 
 [dependencies]
@@ -38,7 +38,7 @@ futures = "*"
 tokio-util = {version = "0.3", features = ["codec"]}
 lsx = {version = "1.1", default-features = false, features = ["sha256"]}
 rand = {version = "0.7", optional = true}
-base64 = {version = "0.12", optional = true}
+base64 = "0.12"
 lazy_static = "1.4"
 flate2 = "1.0"
 
