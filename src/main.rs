@@ -749,6 +749,8 @@ fn true_main(invocation: Invocation,
                     let backup_path = path.to_owned() + BACKUP_SUFFIX;
                     match fs::rename(path, &backup_path) {
                         Ok(_) => (),
+                        Err(x) if x.kind() == std::io::ErrorKind::NotFound
+                            => (),
                         Err(x) => writeln!(out, "Error backing up map file: \
                                                  {}", x).unwrap(),
                     }
