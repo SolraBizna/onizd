@@ -676,6 +676,7 @@ async fn server_loop(invocation: Invocation, out: &mut Outputter,
         .unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
     let mut listener = TcpListener::bind(&listen_addr).await?;
     let mut next_client_id: ClientID = 0;
+    writeln!(out, "Startup complete. Listening for connections.").unwrap();
     loop {
         let (socket, peer) = listener.accept().await?;
         writeln!(out, "{} CONNECTED", peer).unwrap();
