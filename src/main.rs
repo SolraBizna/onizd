@@ -84,7 +84,7 @@ pub const NUM_CHALLENGES: usize = 3;
 pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1, 2];
 /// The maximum size an opaque object is allowed to be. This reflects the raw
 /// binary size.
-pub const MAX_OBJECT_SIZE: usize = 1024;
+pub const MAX_OBJECT_SIZE: usize = 4096;
 /// The maximum number of characters an opaque object small enough to store can
 /// take up when Base64 encoded.
 pub const MAX_OBJECT_ENCODED_SIZE: usize = (MAX_OBJECT_SIZE + 2) * 4 / 3;
@@ -115,7 +115,7 @@ fn expect_int<T: TryFrom<i64>>(val: &Value) -> std::io::Result<T> {
 fn expect_string(val: &Value) -> std::io::Result<&str> {
     match val {
         Value::String(ref x) => {
-            if x.len() > 30 { Err(errorize("String was too long")) }
+            if x.len() > 1500 { Err(errorize("String was too long")) }
             else { Ok(x) }
         },
         _ => Err(errorize("Needed a string, got something else")),
