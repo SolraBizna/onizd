@@ -115,7 +115,7 @@ fn expect_int<T: TryFrom<i64>>(val: &Value) -> std::io::Result<T> {
 fn expect_string(val: &Value) -> std::io::Result<&str> {
     match val {
         Value::String(ref x) => {
-            if x.len() > 1500 { Err(errorize("String was too long")) }
+            if x.len() > 5464 { Err(errorize("String was too long")) }
             else { Ok(x) }
         },
         _ => Err(errorize("Needed a string, got something else")),
