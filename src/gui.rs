@@ -128,6 +128,7 @@ impl Controller {
             Ok(x) => x,
             Err(x) => {
                 self.append_text(&x);
+                self.append_text("\n");
                 return;
             }
         };
@@ -218,7 +219,7 @@ impl Controller {
             let text = gtext.as_str();
             if text == "" { None }
             else {
-                match text.parse::<std::net::IpAddr>() {
+                match text.parse::<std::net::SocketAddr>() {
                     Ok(_) => Some(text.to_owned()),
                     Err(_) => return Err("Invalid listen address.".to_owned()),
                 }
