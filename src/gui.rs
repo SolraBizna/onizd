@@ -59,6 +59,8 @@ struct Controller {
     ping_checkbox: CheckButton,
     ping_field: Entry,
     verbose_checkbox: CheckButton,
+    save_checkbox: CheckButton,
+    save_field: Entry,
     start_button: Button,
     stop_button: Button,
     output_view: TextView,
@@ -77,13 +79,16 @@ impl Controller {
                ping_checkbox: CheckButton,
                ping_field: Entry,
                verbose_checkbox: CheckButton,
+               save_checkbox: CheckButton,
+               save_field: Entry,
                start_button: Button,
                stop_button: Button,
                output_view: TextView) -> Rc<RefCell<Controller>> {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let ret = Rc::new(RefCell::new(Controller {
             _window, listen_checkbox, listen_field, ping_checkbox, ping_field,
-            output_view, verbose_checkbox, start_button, stop_button,
+            output_view, verbose_checkbox, save_checkbox, save_field,
+            start_button, stop_button,
             server_thread: None, terminator: None, server_canary: None,
             self_ref: None, log_tx, log_rx,
         }));
@@ -106,8 +111,10 @@ impl Controller {
                 self.listen_checkbox.set_sensitive(true);
                 self.ping_checkbox.set_sensitive(true);
                 self.verbose_checkbox.set_sensitive(true);
+                self.save_checkbox.set_sensitive(true);
                 self.listen_field.set_sensitive(self.listen_checkbox.get_active());
                 self.ping_field.set_sensitive(self.ping_checkbox.get_active());
+                self.save_field.set_sensitive(self.save_checkbox.get_active());
                 self.start_button.set_sensitive(true);
                 self.stop_button.set_sensitive(false);
             },
@@ -115,8 +122,10 @@ impl Controller {
                 self.listen_checkbox.set_sensitive(false);
                 self.ping_checkbox.set_sensitive(false);
                 self.verbose_checkbox.set_sensitive(false);
+                self.save_checkbox.set_sensitive(false);
                 self.listen_field.set_sensitive(false);
                 self.ping_field.set_sensitive(false);
+                self.save_field.set_sensitive(false);
                 self.start_button.set_sensitive(false);
                 self.stop_button.set_sensitive(true);
             },
@@ -214,6 +223,13 @@ impl Controller {
         buffer.delete(&mut hajime, &mut koko);
     }
     fn get_invocation(&mut self) -> Result<Invocation, String> {
+        let save_file = if self.save_checkbox.get_active() {
+            let gtext = self.save_field.get_text();
+            let text = gtext.as_str();
+            if text == "" { Some(self.save_field.get_placeholder_text().unwrap().as_str().to_owned()) }
+            else if !text.ends_with(".json") { Some(text.to_owned() + ".json")}
+            else { Some(text.to_owned()) }
+        } else { None };
         let listen_addr = if self.listen_checkbox.get_active() {
             let gtext = self.listen_field.get_text();
             let text = gtext.as_str();
@@ -237,8 +253,8 @@ impl Controller {
             }
         } else { None };
         let verbosity = if self.verbose_checkbox.get_active() { 1 } else { 0 };
-        Ok(Invocation { listen_addr, ping_interval, verbosity,
-                        offset_mode: false, auth_file: None, save_file: None })
+        Ok(Invocation { listen_addr, ping_interval, verbosity, save_file,
+                        offset_mode: false, auth_file: None })
     }
 }
 
@@ -284,7 +300,19 @@ pub fn go() {
         little_box.add(&verbose_checkbox);
         little_box.add(&verbose_label);
         big_box.add(&little_box);
-        // Row #2: buttons!
+        // Row #2: saving-related things
+        let little_box = BoxBuilder::new().spacing(SPACING).build();
+        let save_checkbox = CheckButton::new();
+        let save_label = LabelBuilder::new().label("Save in file:")
+            .halign(Align::Start).build();
+        let save_field = EntryBuilder::new().hexpand(true).hexpand_set(true)
+            .placeholder_text("Saved Map.json")
+            .sensitive(false).build();
+        little_box.add(&save_checkbox);
+        little_box.add(&save_label);
+        little_box.add(&save_field);
+        big_box.add(&little_box);
+        // Row #3: buttons!
         let button_box = BoxBuilder::new().halign(Align::End).spacing(SPACING)
             .build();
         let stop_button = ButtonBuilder::new().label("Stop Server")
@@ -293,11 +321,11 @@ pub fn go() {
         let start_button = ButtonBuilder::new().label("Start Server").build();
         button_box.add(&start_button);
         big_box.add(&button_box);
-        // Row #3: intermission...
+        // Row #4: intermission...
         let separator = SeparatorBuilder::new().hexpand(true)
             .build();
         big_box.add(&separator);
-        // Row #4: GIANT TEXT BOX
+        // Row #5: GIANT TEXT BOX
         let scroller = ScrolledWindowBuilder::new()
             .hscrollbar_policy(PolicyType::Never)
             .vscrollbar_policy(PolicyType::Always)
@@ -314,8 +342,8 @@ pub fn go() {
         window.show_all();
         // Controller will keep track of itself
         Controller::new(window, listen_checkbox, listen_field, ping_checkbox,
-                        ping_field, verbose_checkbox, start_button,
-                        stop_button, output_view);
+                        ping_field, verbose_checkbox, save_checkbox,
+                        save_field, start_button, stop_button, output_view);
     });
     application.run(&[]);
 }
