@@ -337,15 +337,16 @@ impl Map {
         };
         for (k,v) in value.into_iter() {
             let mut kit = k.split(",");
-            let (x, y) = match (kit.next(), kit.next(), kit.next()) {
-                (Some(x), Some(y), None) => (x, y),
+            let (x, y, z) = match (kit.next(), kit.next(), kit.next(), kit.next()) {
+                (Some(x), Some(y), Some(z), None) => (x, y, z),
+                (Some(x), Some(y), None, _) => (x, y, "0"),
                 _ => continue, // skip invalid points
             };
-            let (x, y) = match (x.parse::<i32>(), y.parse::<i32>()) {
-                (Ok(x), Ok(y)) => (x, y),
+            let (x, y, z) = match (x.parse::<i32>(), y.parse::<i32>(), z.parse::<i32>()) {
+                (Ok(x), Ok(y), Ok(z)) => (x, y, z),
                 _ => continue,
             };
-            let point = Point::new(x, y);
+            let point = Point::new(x, y, z);
             let tile = match v {
                 Value::Object(x) => x,
                 _ => continue, // skip invalid tiles

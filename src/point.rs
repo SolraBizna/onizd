@@ -23,24 +23,34 @@ use std::fmt::Display;
 pub struct Point {
     x: i32,
     y: i32,
+    z: i32,
 }
 
 impl Display for Point {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
-        fmt.write_str("{")?;
-        self.x.fmt(fmt)?;
-        fmt.write_str(",")?;
-        self.y.fmt(fmt)?;
-        fmt.write_str("}")?;
+        if self.z == 0 {
+            fmt.write_fmt(format_args!("{{{},{}}}", self.x, self.y))?;
+        }
+        else {
+            fmt.write_fmt(format_args!("{{{},{},{}}}", self.x, self.y, self.z))?;
+        }
         Ok(())
     }
 }
 
 impl Point {
-    pub fn new(x: i32, y: i32) -> Point {
-        Point { x, y }
+    pub fn new(x: i32, y: i32, z: i32) -> Point {
+        Point { x, y, z }
     }
     pub fn get_x(&self) -> i32 { self.x }
     pub fn get_y(&self) -> i32 { self.y }
-    pub fn as_string(&self) -> String { format!("{},{}", self.x, self.y) }
+    pub fn get_z(&self) -> i32 { self.z }
+    pub fn as_string(&self) -> String {
+        if self.z == 0 {
+            format!("{},{}", self.x, self.y)
+        }
+        else {
+            format!("{},{},{}", self.x, self.y, self.z)
+        }
+    }
 }
