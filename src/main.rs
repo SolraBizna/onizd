@@ -81,7 +81,7 @@ pub const AUTH_BYTE_SIZE: usize = 5496;
 #[cfg(feature = "auth")]
 pub const NUM_CHALLENGES: usize = 3;
 /// The list of version numbers this version of the server will support.
-pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1, 2, 3];
+pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1, 2];
 /// The maximum size an opaque object is allowed to be. This reflects the raw
 /// binary size.
 pub const MAX_OBJECT_SIZE: usize = 4096;
@@ -104,17 +104,6 @@ fn errorize(err: &str) -> std::io::Error {
 
 fn expect_int<T: TryFrom<i64>>(val: &Value) -> std::io::Result<T> {
     match val {
-        Value::Number(x) if x.is_i64() => match val.as_i64().unwrap().try_into() {
-            Ok(x) => Ok(x),
-            Err(_) => Err(errorize("Number out of range")),
-        },
-        _ => Err(errorize("Needed a number, got something else"))
-    }
-}
-
-fn opt_int<T: TryFrom<i64>>(val: &Value, def: T) -> std::io::Result<T> {
-    match val {
-        Value::Null => Ok(def),
         Value::Number(x) if x.is_i64() => match val.as_i64().unwrap().try_into() {
             Ok(x) => Ok(x),
             Err(_) => Err(errorize("Number out of range")),
@@ -266,7 +255,7 @@ async fn inner_client(out: &mut Outputter,
             return Err(errorize("handshake is for wrong protocol"));
         }
     }
-    let (proto_version, _may_send_handshake_error) = {
+    let (_proto_version, _may_send_handshake_error) = {
         let proto_version = match &message["version"] {
             Value::Number(x) => match x.as_i64() {
                 Some(x) => Some(x),
@@ -278,7 +267,8 @@ async fn inner_client(out: &mut Outputter,
             // Like version 1, except the client will crash if we send
             // `handshake_error`
             Some(0) => Ok((2, false)),
-            // We support versions 0 through 2 identically. We would accept a
+            // Current version... sort of.
+            // We support current versions identically. We would accept a
             // `send_object` message from a version 1 (or even 0) client, for
             // example. The main reason to bump the version number to 2 after
             // adding the object messages was to stop new clients (that support
@@ -286,9 +276,6 @@ async fn inner_client(out: &mut Outputter,
             // servers (that will crash with an unfriendly message if they
             // receive one).
             Some(1) | Some(2) => Ok((2, true)),
-            // Current version. Difference: we won't send "z" values to clients
-            // older than version 3.
-            Some(3) => Ok((3, true)),
             // Older versions
             Some(x) if x < 0 => Err(("version_too_old", "client is too old")),
             // Newer versions
@@ -404,22 +391,13 @@ async fn inner_client(out: &mut Outputter,
     // send all registrations before our first flush
     while let Ok((polarity, loc, what)) = registrations.try_recv() {
         let typ = if polarity { "registered" } else { "unregistered"};
-        let mut message = json!({
-            "type": typ,
-            "x": loc.get_x(),
-            "y": loc.get_y(),
-            "what": what,
-        });
-        if proto_version >= 3 {
-            if loc.get_z() != 0 {
-                message["z"] = loc.get_z().into();
-            }
-        }
-        else if loc.get_z() != 0 {
-            // ignore registrations on other asteroids for old clients
-            continue;
-        }
-        send_response(&mut client, message, &Value::Null).await?;
+        send_response(&mut client,
+                      json!({
+                          "type": typ,
+                          "x": loc.get_x(),
+                          "y": loc.get_y(),
+                          "what": what,
+                      }), &Value::Null).await?;
     }
     client.flush().await?;
     // if there's no ping interval specified, ping once per day... since I
@@ -436,22 +414,13 @@ async fn inner_client(out: &mut Outputter,
             },
             Some((polarity, loc, what)) = registrations.next() => {
                 let typ = if polarity { "registered" } else { "unregistered"};
-                let mut message = json!({
-                    "type": typ,
-                    "x": loc.get_x(),
-                    "y": loc.get_y(),
-                    "what": what,
-                });
-                if proto_version >= 3 {
-                    if loc.get_z() != 0 {
-                        message["z"] = loc.get_z().into();
-                    }
-                }
-                else if loc.get_z() != 0 {
-                    // ignore registrations on other asteroids for old clients
-                    continue;
-                }
-                send_response(&mut client, message, &Value::Null).await?;
+                send_response(&mut client,
+                              json!({
+                                  "type": typ,
+                                  "x": loc.get_x(),
+                                  "y": loc.get_y(),
+                                  "what": what,
+                              }), &Value::Null).await?;
                 client.flush().await?;
             },
             message = client.next() => {
@@ -471,26 +440,16 @@ async fn inner_client(out: &mut Outputter,
                         "send_joules" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let joules = expect_int(&message["joules"])?;
-                            let point = Point::new(x, y, z);
+                            let point = Point::new(x, y);
                             let spare = map.lock().unwrap().add_joules(point, joules);
-                            let mut response = json!({
-                                "type": "sent_joules",
-                                "x": x,
-                                "y": y,
-                                "spare": spare
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "sent_joules",
+                                              "x": x,
+                                              "y": y,
+                                              "spare": spare
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 if spare > 0 {
                                     writeln!(out, "  {} sent {}J to {} ({}J \
@@ -507,27 +466,17 @@ async fn inner_client(out: &mut Outputter,
                         "recv_joules" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let max_joules = expect_int(&message["max_joules"])?;
-                            let point = Point::new(x, y + recv_offset_y, z);
+                            let point = Point::new(x, y + recv_offset_y);
                             let joules = map.lock().unwrap().sub_joules(point,
                                                                         max_joules);
-                            let mut response = json!({
-                                "type": "got_joules",
-                                "x": x,
-                                "y": y,
-                                "joules": joules,
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "got_joules",
+                                              "x": x,
+                                              "y": y,
+                                              "joules": joules,
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 writeln!(out, "  {} wanted up to {}J from {} \
                                                ({}J gotten)",
@@ -538,32 +487,22 @@ async fn inner_client(out: &mut Outputter,
                         "send_packet" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let packet: MatPacket = serde_json::from_value(message["packet"].clone())?;
                             let phase = serde_json::from_value(message["phase"].clone())?;
                             if packet.is_oversized(phase) {
                                 return Err(errorize("Received `MatPacket` had too \
                                                      much mass"))
                             }
-                            let point = Point::new(x, y, z);
+                            let point = Point::new(x, y);
                             let accepted = map.lock().unwrap()
                                 .add_packet(point, &packet, phase);
-                            let mut response = json!({
-                                "type": "sent_packet",
-                                "x": x,
-                                "y": y,
-                                "accepted": accepted
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "sent_packet",
+                                              "x": x,
+                                              "y": y,
+                                              "accepted": accepted
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 if accepted {
                                     writeln!(out, "  {} put {} {} in {}",
@@ -581,27 +520,17 @@ async fn inner_client(out: &mut Outputter,
                         "recv_packet" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let phase = serde_json::from_value(message["phase"].clone())?;
-                            let point = Point::new(x, y + recv_offset_y, z);
+                            let point = Point::new(x, y + recv_offset_y);
                             let packet = map.lock().unwrap().pop_packet(point, phase);
-                            let mut response = json!({
+                            send_response(&mut client,
+                                          json!({
                                               "type": "got_packet",
                                               "x": x,
                                               "y": y,
                                               "phase": phase,
                                               "packet": packet,
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 match packet {
                                     Some(packet) =>
@@ -618,12 +547,6 @@ async fn inner_client(out: &mut Outputter,
                         "send_object" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let base64_object = expect_string(&message["object"])?;
                             if base64_object.len() > MAX_OBJECT_ENCODED_SIZE {
                                 return Err(errorize("Received object was too \
@@ -639,21 +562,16 @@ async fn inner_client(out: &mut Outputter,
                                 return Err(errorize("Received object was too \
                                                      many bytes long"))
                             }
-                            let point = Point::new(x, y, z);
+                            let point = Point::new(x, y);
                             let accepted = map.lock().unwrap()
                                 .add_object(point, raw_object);
-                            let mut response = json!({
-                                "type": "sent_object",
-                                "x": x,
-                                "y": y,
-                                "z": z,
-                                "accepted": accepted
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "sent_object",
+                                              "x": x,
+                                              "y": y,
+                                              "accepted": accepted
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 if accepted {
                                     writeln!(out, "  {} put an object in {}",
@@ -671,27 +589,16 @@ async fn inner_client(out: &mut Outputter,
                         "recv_object" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
-                            let point = Point::new(x, y + recv_offset_y, z);
+                            let point = Point::new(x, y + recv_offset_y);
                             let object = map.lock().unwrap().pop_object(point)
                                 .map(base64::encode);
-                            let mut response = json!({
-                                "type": "got_object",
-                                "x": x,
-                                "y": y,
-                                "z": z,
-                                "object": object,
-                            });
-                            if z != 0 {
-                                response["z"] = z.into();
-                            }
-                            send_response(&mut client, response,
-                                          &message["cookie"]).await?;
+                            send_response(&mut client,
+                                          json!({
+                                              "type": "got_object",
+                                              "x": x,
+                                              "y": y,
+                                              "object": object,
+                                          }), &message["cookie"]).await?;
                             if verbosity >= 1 {
                                 match object {
                                     Some(_) =>
@@ -708,19 +615,12 @@ async fn inner_client(out: &mut Outputter,
                         "register" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let what = expect_string(&message["what"])?;
-                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y), z);
+                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             if !map.lock().unwrap().register(point, client_id,
                                                              what.to_owned()) {
-                                return Err(errorize("Registered too many \
-                                                     buildings at the same \
-                                                     point"))
+                                return Err(errorize("Registered too many buildings at \
+                                                     the same point"))
                             }
                             if verbosity >= 1 {
                                 writeln!(out, "  {} registered a {:?} at {}",
@@ -730,14 +630,8 @@ async fn inner_client(out: &mut Outputter,
                         "unregister" => {
                             let x = expect_int(&message["x"])?;
                             let y = expect_int::<i32>(&message["y"])?;
-                            let z = opt_int(&message["z"], 0)?;
-                            if proto_version < 3 && z != 0 {
-                                return Err(errorize("Received a non-zero Z \
-                                                     from pre-version-3 \
-                                                     client!"))
-                            }
                             let what = expect_string(&message["what"])?;
-                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y), z);
+                            let point = Point::new(x, y + register_maybe_offset(what, recv_offset_y));
                             map.lock().unwrap().unregister(point, client_id, what);
                             if verbosity >= 1 {
                                 writeln!(out, "  {} unregistered a {:?} at {}",
