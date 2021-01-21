@@ -61,30 +61,26 @@ impl MitZlibWriter {
 }
 
 impl AsyncWrite for MitZlibWriter {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, mut buf: &[u8])
-        -> Poll<std::io::Result<usize>> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8])
+                  -> Poll<std::io::Result<usize>> {
         let me = Pin::into_inner(self);
-        let mut wrote = 0;
-        loop {
-            match me.soft_flush(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(x)) => return Poll::Ready(Err(x)),
-                _ => (),
-            }
-            if buf.is_empty() { return Poll::Ready(Ok(wrote)) }
-            let total_in_before = me.zlib.total_in();
-            match me.zlib.compress_vec(buf, &mut me.buf,
-                                       FlushCompress::None) {
-                Ok(Status::Ok) => (),
-                // This should not happen
-                _ => return Poll::Ready(Err(errorize("compression \
-                                                      error")))
-            }
-            let total_in_after = me.zlib.total_in();
-            let wrote_this_time = (total_in_after - total_in_before) as usize;
-            wrote += wrote_this_time;
-            buf = &buf[wrote_this_time..];
+        match me.soft_flush(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(x)) => return Poll::Ready(Err(x)),
+            _ => (),
         }
+        if buf.is_empty() { return Poll::Ready(Ok(0)) }
+        let total_in_before = me.zlib.total_in();
+        match me.zlib.compress_vec(buf, &mut me.buf,
+                                     FlushCompress::None) {
+            Ok(Status::Ok) => (),
+            // This should not happen
+            _ => return Poll::Ready(Err(errorize("compression \
+                                                  error")))
+        }
+        let total_in_after = me.zlib.total_in();
+        Poll::Ready(Ok((total_in_after - total_in_before)
+            .try_into().unwrap()))
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context)
                   -> Poll<std::io::Result<()>> {
