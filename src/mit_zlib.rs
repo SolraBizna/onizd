@@ -38,6 +38,7 @@ pub struct MitZlibWriter {
     zlib: Compress,
     buf: Vec<u8>,
     cursor: usize,
+    unflushed_data_sent: bool,
 }
 
 impl MitZlibWriter {
@@ -70,7 +71,7 @@ impl AsyncWrite for MitZlibWriter {
             _ => (),
         }
         if buf.is_empty() { return Poll::Ready(Ok(0)) }
-        let total_in_before = me.zlib.total_in();
+        me.unflushed_data_sent = true;
         match me.zlib.compress_vec(buf, &mut me.buf,
                                      FlushCompress::None) {
             Ok(Status::Ok) => (),
@@ -78,24 +79,30 @@ impl AsyncWrite for MitZlibWriter {
             _ => return Poll::Ready(Err(errorize("compression \
                                                   error")))
         }
-        let total_in_after = me.zlib.total_in();
-        Poll::Ready(Ok((total_in_after - total_in_before)
-            .try_into().unwrap()))
+        // assume everything got buffered o_O
+        match me.soft_flush(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(x)) => return Poll::Ready(Err(x)),
+            Poll::Ready(Ok(_)) => Poll::Ready(Ok(buf.len())),
+        }
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context)
                   -> Poll<std::io::Result<()>> {
         let me = Pin::into_inner(self);
-        match me.soft_flush(cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(x)) => return Poll::Ready(Err(x)),
-            _ => (),
-        }
-        match me.zlib.compress_vec(&[], &mut me.buf,
-                                   FlushCompress::Sync) {
-            Ok(Status::Ok) | Ok(Status::BufError) => (),
-            // This should not happen
-            _ => return Poll::Ready(Err(errorize("compression \
-                                                  error")))
+        if me.unflushed_data_sent {
+            match me.soft_flush(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(x)) => return Poll::Ready(Err(x)),
+                _ => (),
+            }
+            match me.zlib.compress_vec(&[], &mut me.buf,
+                                       FlushCompress::Sync) {
+                Ok(Status::Ok) | Ok(Status::BufError) => (),
+                // This should not happen
+                _ => return Poll::Ready(Err(errorize("compression \
+                                                      error")))
+            }
+            me.unflushed_data_sent = false;
         }
         match me.soft_flush(cx) {
             Poll::Pending => return Poll::Pending,
@@ -164,7 +171,8 @@ impl AsyncRead for MitZlibReader {
 /// Wraps an `OwnedWriteHalf`, compressing data before it's sent.
 pub fn make_writer(inner: OwnedWriteHalf) -> MitZlibWriter {
     let zlib = Compress::new(flate2::Compression::best(), true);
-    MitZlibWriter { zlib, inner, buf: Vec::with_capacity(256), cursor: 0 }
+    MitZlibWriter { zlib, inner, buf: Vec::with_capacity(256), cursor: 0,
+                    unflushed_data_sent: false }
 }
 
 /// Wraps an `OwnedReadHalf`, decompressing data after it's received.
