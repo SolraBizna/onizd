@@ -663,8 +663,14 @@ async fn client(mut out: Outputter,
     .await {
         Ok(()) =>
             writeln!(out, "  {} DISCONNECTED", peer),
-        Err(x) =>
-            writeln!(out, "  {} ERROR: {}", peer, x),
+        Err(x) => {
+            if cfg!(debug_assertions) {
+                writeln!(out, "  {} ERROR: {:?}", peer, x)
+            }
+            else {
+                writeln!(out, "  {} ERROR: {}", peer, x)
+            }
+        }
     }.unwrap();
     map.lock().unwrap().unregister_all(client_id);
 }
