@@ -48,10 +48,10 @@ features = ["v3_16"]
 optional = true
 
 [dependencies.gio]
-version = ""
+version = "*"
 features = ["v2_44"]
 optional = true
 
 [dependencies.glib]
-version = ""
+version = "*"
 optional = true
