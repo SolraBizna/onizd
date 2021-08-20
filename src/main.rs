@@ -82,12 +82,6 @@ pub const AUTH_BYTE_SIZE: usize = 5496;
 pub const NUM_CHALLENGES: usize = 3;
 /// The list of version numbers this version of the server will support.
 pub const SUPPORTED_VERSIONS: &[i64] = &[0, 1, 2];
-/// The maximum size an opaque object is allowed to be. This reflects the raw
-/// binary size.
-pub const MAX_OBJECT_SIZE: usize = 4096;
-/// The maximum number of characters an opaque object small enough to store can
-/// take up when Base64 encoded.
-pub const MAX_OBJECT_ENCODED_SIZE: usize = (MAX_OBJECT_SIZE + 2) * 4 / 3;
 /// Suffix to add to a filename when making a backup.
 pub const BACKUP_SUFFIX: &str = "~";
 /// Suffix to add to a filename when writing.
@@ -202,8 +196,10 @@ async fn inner_client(out: &mut Outputter,
                       map: &Arc<Mutex<Map>>,
                       socket: TcpStream,
                       peer: &SocketAddr,
-                      client_id: ClientID)
+                      client_id: ClientID,
+                      max_object_size: usize)
                       -> std::io::Result<()> {
+    let max_object_encoded_size: usize = (max_object_size + 2) * 4 / 3;
     socket.set_nodelay(true)?;
     let mut client = codec::Framed::new(socket, MessageCoder {
         verbosity, out: out.clone()
@@ -548,7 +544,7 @@ async fn inner_client(out: &mut Outputter,
                             let x = expect_int(&message["x"])?;
                             let y = expect_int(&message["y"])?;
                             let base64_object = expect_string(&message["object"])?;
-                            if base64_object.len() > MAX_OBJECT_ENCODED_SIZE {
+                            if base64_object.len() > max_object_encoded_size {
                                 return Err(errorize("Received object was too \
                                                      many bytes long"))
                             }
@@ -558,7 +554,7 @@ async fn inner_client(out: &mut Outputter,
                                     return Err(errorize("Received object was \
                                                          invalid Base64"))
                             };
-                            if raw_object.len() > MAX_OBJECT_SIZE {
+                            if raw_object.len() > max_object_size {
                                 return Err(errorize("Received object was too \
                                                      many bytes long"))
                             }
@@ -657,9 +653,10 @@ async fn client(mut out: Outputter,
                 verbosity: u32, ping_interval: Option<Duration>,
                 offset_mode: bool, auth_file: Option<String>,
                 map: Arc<Mutex<Map>>, socket: TcpStream, peer: SocketAddr,
-                client_id: ClientID) {
+                client_id: ClientID, max_object_size: usize) {
     match inner_client(&mut out, verbosity, ping_interval, offset_mode,
-                       auth_file, &map, socket, &peer, client_id)
+                       auth_file, &map, socket, &peer, client_id,
+                       max_object_size)
     .await {
         Ok(()) =>
             writeln!(out, "  {} DISCONNECTED", peer),
@@ -696,7 +693,7 @@ async fn server_loop(invocation: Invocation, out: &mut Outputter,
             .expect("Can't have more than 2^64 clients in one session!");
         tokio::spawn(client(out.clone(), verbosity, ping_interval, offset_mode,
                             auth_file, map_clone, socket, peer,
-                            client_id));
+                            client_id, invocation.max_object_size));
     }
 }
 
@@ -713,8 +710,9 @@ fn true_main(invocation: Invocation,
         None => (),
         Some(ref path) => {
             let mut map = map.lock().unwrap();
-            match map.try_load(path)
-            .or_else(|_| map.try_load(&(path.to_owned() + BACKUP_SUFFIX))) {
+            match map.try_load(path, invocation.max_object_size)
+                .or_else(|_| map.try_load(&(path.to_owned() + BACKUP_SUFFIX),
+                                          invocation.max_object_size)) {
                 Ok(_) => writeln!(out, "Successfully loaded the map."),
                 Err(x) => {
                     map.clear();

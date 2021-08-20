@@ -326,7 +326,8 @@ impl Map {
     /// Attempts to initialize the map with saved data from the given path.
     /// May leave the map in a partly-populated state on failure; you should
     /// call `clear` if that happens.
-    pub fn try_load(&mut self, path: &str) -> IoResult<()> {
+    pub fn try_load(&mut self, path: &str, max_object_size: usize) -> IoResult<()> {
+        let max_object_encoded_size: usize = (max_object_size + 2) * 4 / 3;
         self.clear();
         let mut file = File::open(path)?;
         let value = serde_json::from_reader(&mut file)?;
@@ -389,9 +390,9 @@ impl Map {
                             Value::String(x) => x,
                             _ => continue,
                         };
-                        if object.len() > MAX_OBJECT_ENCODED_SIZE { continue }
+                        if object.len() > max_object_encoded_size { continue }
                         let decoded = match base64::decode(object) {
-                            Ok(x) if x.len() <= MAX_OBJECT_SIZE => { x },
+                            Ok(x) if x.len() <= max_object_size => { x },
                             _ => continue,
                         };
                         self.add_object(point, decoded);

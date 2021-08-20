@@ -45,6 +45,7 @@ use gtk::{
 use gio::prelude::*;
 use glib;
 use crate::{Invocation, Outputter};
+use crate::invocation::DEFAULT_MAX_OBJECT_SIZE;
 
 /// The maximum number of bytes that the log is allowed to grow to.
 const MAX_LOG_SIZE: i32 = 1_000_000; // this is a lot, okay
@@ -58,6 +59,8 @@ struct Controller {
     listen_field: Entry,
     ping_checkbox: CheckButton,
     ping_field: Entry,
+    osize_checkbox: CheckButton,
+    osize_field: Entry,
     verbose_checkbox: CheckButton,
     save_checkbox: CheckButton,
     save_field: Entry,
@@ -83,12 +86,14 @@ impl Controller {
                save_field: Entry,
                start_button: Button,
                stop_button: Button,
-               output_view: TextView) -> Rc<RefCell<Controller>> {
+               output_view: TextView,
+               osize_checkbox: CheckButton,
+               osize_field: Entry) -> Rc<RefCell<Controller>> {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let ret = Rc::new(RefCell::new(Controller {
             _window, listen_checkbox, listen_field, ping_checkbox, ping_field,
             output_view, verbose_checkbox, save_checkbox, save_field,
-            start_button, stop_button,
+            start_button, stop_button, osize_checkbox, osize_field,
             server_thread: None, terminator: None, server_canary: None,
             self_ref: None, log_tx, log_rx,
         }));
@@ -99,6 +104,8 @@ impl Controller {
         me.listen_checkbox.connect_clicked(move |_| rc.borrow_mut().update_sensitive());
         let rc = ret.clone();
         me.ping_checkbox.connect_clicked(move |_| rc.borrow_mut().update_sensitive());
+        let rc = ret.clone();
+        me.osize_checkbox.connect_clicked(move |_| rc.borrow_mut().update_sensitive());
         let rc = ret.clone();
         me.start_button.connect_clicked(move |_| rc.borrow_mut().start_server());
         let rc = ret.clone();
@@ -111,9 +118,11 @@ impl Controller {
                 self.listen_checkbox.set_sensitive(true);
                 self.ping_checkbox.set_sensitive(true);
                 self.verbose_checkbox.set_sensitive(true);
+                self.osize_checkbox.set_sensitive(true);
                 self.save_checkbox.set_sensitive(true);
                 self.listen_field.set_sensitive(self.listen_checkbox.get_active());
                 self.ping_field.set_sensitive(self.ping_checkbox.get_active());
+                self.osize_field.set_sensitive(self.osize_checkbox.get_active());
                 self.save_field.set_sensitive(self.save_checkbox.get_active());
                 self.start_button.set_sensitive(true);
                 self.stop_button.set_sensitive(false);
@@ -123,8 +132,10 @@ impl Controller {
                 self.ping_checkbox.set_sensitive(false);
                 self.verbose_checkbox.set_sensitive(false);
                 self.save_checkbox.set_sensitive(false);
+                self.osize_checkbox.set_sensitive(false);
                 self.listen_field.set_sensitive(false);
                 self.ping_field.set_sensitive(false);
+                self.osize_field.set_sensitive(false);
                 self.save_field.set_sensitive(false);
                 self.start_button.set_sensitive(false);
                 self.stop_button.set_sensitive(true);
@@ -252,9 +263,20 @@ impl Controller {
                 }
             }
         } else { None };
+        let max_object_size = if self.osize_checkbox.get_active() {
+            let gtext = self.osize_field.get_text();
+            let text = gtext.as_str();
+            if text == "" { DEFAULT_MAX_OBJECT_SIZE }
+            else {
+                match text.parse::<usize>() {
+                    Ok(x) if x > 10 && x < 10000000 => x,
+                    _ => return Err("Invalid object size limit.".to_owned()),
+                }
+            }
+        } else { DEFAULT_MAX_OBJECT_SIZE };
         let verbosity = if self.verbose_checkbox.get_active() { 1 } else { 0 };
         Ok(Invocation { listen_addr, ping_interval, verbosity, save_file,
-                        offset_mode: false, auth_file: None })
+                        offset_mode: false, auth_file: None, max_object_size })
     }
 }
 
@@ -312,6 +334,19 @@ pub fn go() {
         little_box.add(&save_label);
         little_box.add(&save_field);
         big_box.add(&little_box);
+        // Row #2.5: ping interval, verbosity
+        let little_box = BoxBuilder::new().spacing(SPACING).build();
+        let osize_checkbox = CheckButton::new();
+        let osize_label = LabelBuilder::new().label("Object size limit:")
+            .halign(Align::Start).build();
+        let osize_field = EntryBuilder::new().sensitive(false)
+            .placeholder_text(&format!("{}",DEFAULT_MAX_OBJECT_SIZE))
+            .hexpand(true).hexpand_set(true)
+            .input_purpose(InputPurpose::Number).max_length(8).build();
+        little_box.add(&osize_checkbox);
+        little_box.add(&osize_label);
+        little_box.add(&osize_field);
+        big_box.add(&little_box);
         // Row #3: buttons!
         let button_box = BoxBuilder::new().halign(Align::End).spacing(SPACING)
             .build();
@@ -343,7 +378,8 @@ pub fn go() {
         // Controller will keep track of itself
         Controller::new(window, listen_checkbox, listen_field, ping_checkbox,
                         ping_field, verbose_checkbox, save_checkbox,
-                        save_field, start_button, stop_button, output_view);
+                        save_field, start_button, stop_button, output_view,
+                        osize_checkbox, osize_field);
     });
     application.run(&[]);
 }

@@ -28,7 +28,10 @@ pub struct Invocation {
     pub offset_mode: bool,
     pub verbosity: u32,
     pub ping_interval: Option<Duration>,
+    pub max_object_size: usize,
 }
+
+pub const DEFAULT_MAX_OBJECT_SIZE: usize = 8192;
 
 fn print_usage(program: &str, opts: getopts::Options) {
     let brief = format!("\
@@ -49,6 +52,7 @@ pub fn get_invocation() -> Option<Invocation> {
     opts.optopt("a", "auth-file", "Specify the shared secret file to use for authentication. If absent, authentication will not be used.", "FILE");
     opts.optopt("s", "save-file", "Specify a JSON file in which to save and restore the map state.", "FILE");
     opts.optopt("p", "ping-interval", "Send a \"ping\" message to each client roughly this often. This can help deal with broken NAT routers that aggressively drop idle connections.", "SECONDS");
+    opts.optopt("O", "object-size", "Sets the maximum byte size of objects that can be set. The default is 8192 bytes, which may not be enough for certain complicated objects.", "BYTES");
     opts.optflag("?", "help", "Print this help string.");
     let matches = match opts.parse(&args[1..]) {
         Ok(x) => x,
@@ -77,6 +81,18 @@ pub fn get_invocation() -> Option<Invocation> {
                     Ok(x) if x > 0 && x < 999 => Some(Duration::new(x, 0)),
                     _ => {
                         eprintln!("Invalid ping interval, should be between 1 and 999");
+                        print_usage(&args[0], opts);
+                        return None
+                    }
+                }
+            },
+            max_object_size: match matches.opt_str("O") {
+                None => DEFAULT_MAX_OBJECT_SIZE,
+                Some(x) => match x.parse() {
+                    Ok(x) if x > 10 && x < 10000000 => x,
+                    _ => {
+                        eprintln!("Invalid object size, should be between \
+                                   10 and 10000000");
                         print_usage(&args[0], opts);
                         return None
                     }
