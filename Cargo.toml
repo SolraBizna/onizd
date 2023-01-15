@@ -33,7 +33,7 @@ getopts = "0.2.21"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0"
 tokio = {version = "0.2", features = ["rt-core", "io-std", "io-util", "tcp", "macros", "dns", "fs", "time", "sync"]}
-bytes = "*"
+bytes = "0.5.6"
 futures = "*"
 tokio-util = {version = "0.3", features = ["codec"]}
 lsx = {version = "1.1", default-features = false, features = ["sha256"]}
