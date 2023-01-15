@@ -54,6 +54,7 @@ use serde_json::{Value,json};
 #[cfg(feature = "auth")]
 use rand::{prelude::*, rngs::OsRng};
 use anyhow;
+use anyhow::Context;
 
 mod invocation;
 pub use invocation::*;
@@ -677,11 +678,13 @@ async fn server_loop(invocation: Invocation, out: &mut Outputter,
                      -> anyhow::Result<()> {
     let listen_addr = invocation.listen_addr
         .unwrap_or_else(|| DEFAULT_ADDR_AND_PORT.to_owned());
-    let mut listener = TcpListener::bind(&listen_addr).await?;
+    let mut listener = TcpListener::bind(&listen_addr).await
+        .context("Unable to bind the given address and port.")?;
     let mut next_client_id: ClientID = 0;
     writeln!(out, "Startup complete. Listening for connections.").unwrap();
     loop {
-        let (socket, peer) = listener.accept().await?;
+        let (socket, peer) = listener.accept().await
+            .context("Unable to accept an incoming connection")?;
         writeln!(out, "{} CONNECTED", peer).unwrap();
         let map_clone = map.clone();
         let verbosity = invocation.verbosity;
@@ -735,7 +738,7 @@ fn true_main(invocation: Invocation,
         match server_loop(invocation_clone, &mut out_clone, map_clone).await {
             Ok(_) => (),
             Err(x) => {
-                writeln!(out_clone, "\n\nError! {}", x).unwrap();
+                writeln!(out_clone, "\n\nError! {:?}", x).unwrap();
             }
         }
         // improve odds that we terminate ourselves gracefully
